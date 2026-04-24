@@ -13,7 +13,7 @@ register_det_modules()
 register_pose_modules()
 
 # 2. MMDetection Setup - USE LOCAL CHECKPOINT
-det_config_file = 'configs/mmdet/faster-rcnn_r50_fpn_1x_coco.py'
+det_config_file = 'mmdetection/configs/faster_rcnn/faster-rcnn_r50_fpn_1x_coco.py'
 # CHANGE THIS: Use local checkpoint file instead of URL
 det_checkpoint_file = 'checkpoints/faster_rcnn_r50_fpn_1x_coco_20200130-047c8118.pth'
 
