@@ -269,3 +269,18 @@ If you encounter issues:
 4. Try running with verbose output
 
 Happy recording! 🎥
+
+
+
+# workflow ==============================================================
+1. Add new videos to dataset
+cp new_video.mp4 data/custom_actions/train/walking/
+
+2. Re-extract keypoints
+python prepare_dataset.py
+
+3. Retrain model (optional - only if adding significant new data)
+python train_custom_model.py
+
+4. Use the updated model for inference
+python inference_custom_action.py
