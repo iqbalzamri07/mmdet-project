@@ -272,15 +272,56 @@ Happy recording! 🎥
 
 
 
-# workflow ==============================================================
+#### =========================== workflow 1 ===========================
+```bash
 1. Add new videos to dataset
 cp new_video.mp4 data/custom_actions/train/walking/
 
-2. Re-extract keypoints
-python prepare_dataset.py
+2. Create Clean Dataset (Remove Spaces in Filenames)
+python create_clean_dataset.py
 
-3. Retrain model (optional - only if adding significant new data)
-python train_custom_model.py
+3. Check annotation files
+head -10 data/custom_actions_videos_clean/train_list.txt
 
-4. Use the updated model for inference
-python inference_custom_action.py
+4. Check Training Config
+cat configs/slowfast_custom.py | head -50
+
+5. Start Training
+./train_slowfast_fixed.sh or python mmaction2/tools/train.py configs/slowfast_custom.py
+
+6. Check best checkpoints
+ls -lh work_dirs/slowfast_custom/best_acc_top1_epoch_*.pth
+
+7. Run inference script
+python slowfast_memory_optimized.py
+```
+
+#### =========================== workflow 2 ===========================
+#### STEP 1: COLLECT DATA
+- Organize videos into:
+- data/custom_actions/train/{smoking,sitting,standing,walking,calling,playing_phone}/
+- data/custom_actions/val/{smoking,sitting,standing,walking,calling,playing_phone}/
+
+#### STEP 2: PREPARE DATASET
+```bash
+source venv/bin/activate
+python create_clean_dataset.py
+```
+
+#### STEP 3: TRAIN MODEL
+```bash
+./train_slowfast_fixed.sh
+```
+#### Wait 2-4 hours for training to complete
+
+#### STEP 4: RUN INFERENCE
+```bash
+python slowfast_memory_optimized.py
+```
+#### Enter video path when prompted
+
+#### STEP 5: VIEW OUTPUT
+```bash
+ls rgb_outputs/*.mp4
+vlc rgb_outputs/cam1_00_20260415144653_custom_*.mp4
+```
