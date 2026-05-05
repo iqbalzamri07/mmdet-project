@@ -7,4 +7,4 @@ footage/
 *.pth
 *.pt
 work_dirs/
-processed_videos/
+process_video/
