@@ -30,7 +30,7 @@ from mmengine import init_default_scope
 MODEL_CONFIG = "configs/slowfast_custom.py"
 
 # Your trained model checkpoint
-MODEL_CHECKPOINT = "work_dirs/slowfast_custom/best_acc_top1_epoch_30.pth"
+MODEL_CHECKPOINT = "work_dirs/slowfast_custom/best_acc_top1_epoch_89.pth"
 
 # Detection model paths
 CHECKPOINT_DIR = "checkpoints"  # Must be defined before use!
@@ -40,7 +40,7 @@ DET_CHECKPOINT = os.path.join(CHECKPOINT_DIR, "faster_rcnn_r50_fpn_1x_coco_20200
 # Your custom action labels (model trained on these)
 CUSTOM_LABELS = ["smoking", "sitting", "standing", "walking", "calling", "playing_phone"]
 
-OUTPUT_DIR = "rgb_outputs"
+OUTPUT_DIR = "process_video"
 CLIP_LEN = 32  # Match training config
 FRAME_STRIDE = 1
 MIN_FRAMES = 5

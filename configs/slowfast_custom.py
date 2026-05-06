@@ -152,7 +152,7 @@ param_scheduler = [
 # Training configuration
 train_cfg = dict(
     type='EpochBasedTrainLoop',
-    max_epochs=40,
+    max_epochs=100,
     val_begin=1,
     val_interval=1,
 )

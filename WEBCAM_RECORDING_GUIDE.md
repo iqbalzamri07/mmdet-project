@@ -319,9 +319,3 @@ python create_clean_dataset.py
 python slowfast_memory_optimized.py
 ```
 #### Enter video path when prompted
-
-#### STEP 5: VIEW OUTPUT
-```bash
-ls rgb_outputs/*.mp4
-vlc rgb_outputs/cam1_00_20260415144653_custom_*.mp4
-```
