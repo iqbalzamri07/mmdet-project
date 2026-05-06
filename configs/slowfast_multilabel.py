@@ -1,16 +1,17 @@
 """
-Fixed single-label version (if you want to keep it simple)
-At least fix the class mismatch!
+SlowFast Configuration for MULTI-LABEL Action Recognition
+Uses NATIVE MMAction2 multi-class support (No custom datasets!)
 """
 
 from mmengine.optim import CosineAnnealingLR, LinearLR
 from mmaction.models import (ActionDataPreprocessor, Recognizer3D,
                              ResNet3dSlowFast, SlowFastHead)
 
-# FIXED: Consistent 6 classes
-ACTION_LABELS = ["smoking", "sitting", "standing", "walking", "calling", "playing_phone"]
-NUM_CLASSES = 6
+# Classes
+ACTION_LABELS = ["sitting", "standing", "walking", "calling", "playing_phone"]
+NUM_CLASSES = 5
 
+# Model settings
 model = dict(
     type=Recognizer3D,
     backbone=dict(
@@ -43,24 +44,31 @@ model = dict(
     cls_head=dict(
         type=SlowFastHead,
         in_channels=2304,
-        num_classes=NUM_CLASSES,  # FIXED: 6!
+        num_classes=NUM_CLASSES,
         spatial_type='avg',
         dropout_ratio=0.5,
-        average_clips='prob'),
+        average_clips='prob',
+        # Multi-label loss
+        loss_cls=dict(
+            type='BCELossWithLogits',  
+            loss_weight=1.0
+        ),
+    ),
     data_preprocessor=dict(
         type=ActionDataPreprocessor,
         mean=[123.675, 116.28, 103.53],
         std=[58.395, 57.12, 57.375],
         format_shape='NCTHW'))
 
+# Standard MMAction2 Dataset
 dataset_type = 'VideoDataset'
 
 train_pipeline = [
     dict(type='DecordInit', io_backend='disk'),
     dict(type='SampleFrames', clip_len=32, frame_interval=2, num_clips=1),
     dict(type='DecordDecode'),
-    dict(type='Resize', scale=(-1, 256)),
-    dict(type='RandomResizedCrop', scale=(224, 224)),  # FIXED
+    # Just force resize to 224x224. Skips all crop bugs.
+    dict(type='Resize', scale=(224, 224), keep_ratio=False), 
     dict(type='Flip', flip_ratio=0.5),
     dict(type='FormatShape', input_format='NCTHW'),
     dict(type='PackActionInputs'),
@@ -70,12 +78,13 @@ test_pipeline = [
     dict(type='DecordInit', io_backend='disk'),
     dict(type='SampleFrames', clip_len=32, frame_interval=2, num_clips=1, test_mode=True),
     dict(type='DecordDecode'),
-    dict(type='Resize', scale=(-1, 256)),
-    dict(type='CenterCrop', crop_size=224),
+    # Same forced resize for validation
+    dict(type='Resize', scale=(224, 224), keep_ratio=False),
     dict(type='FormatShape', input_format='NCTHW'),
     dict(type='PackActionInputs'),
 ]
 
+# Data loaders - NATIVE MULTI-LABEL
 train_dataloader = dict(
     batch_size=2,
     num_workers=4,
@@ -86,8 +95,8 @@ train_dataloader = dict(
         ann_file='data/custom_actions_videos_clean/train_list.txt',
         data_prefix=dict(video='data/custom_actions_videos_clean'),
         pipeline=train_pipeline,
-        multi_class=False,
-        num_classes=NUM_CLASSES,  # FIXED: 6!
+        multi_class=True,   # <--- THIS NATIVELY HANDLES SPACE-SEPARATED LABELS
+        num_classes=NUM_CLASSES,
     )
 )
 
@@ -102,15 +111,15 @@ val_dataloader = dict(
         data_prefix=dict(video='data/custom_actions_videos_clean'),
         pipeline=test_pipeline,
         test_mode=True,
-        multi_class=False,
-        num_classes=NUM_CLASSES,  # FIXED: 6!
+        multi_class=True,   # <--- NATIVE MULTI-LABEL
+        num_classes=NUM_CLASSES,
     )
 )
 
 test_dataloader = val_dataloader
 
 optim_wrapper = dict(
-    optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=1e-4),  # FIXED: Lower LR
+    optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=1e-4),
     clip_grad=dict(max_norm=40, norm_type=2),
 )
 
@@ -119,7 +128,7 @@ param_scheduler = [
     dict(type=CosineAnnealingLR, T_max=40, eta_min=0, by_epoch=True, begin=0, end=50),
 ]
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=50, val_begin=1, val_interval=1)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=50, val_begin=100, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
@@ -131,9 +140,11 @@ default_hooks = dict(
     logger=dict(type='LoggerHook', interval=10),
 )
 
-work_dir = 'work_dirs/slowfast_custom'
+work_dir = 'work_dirs/slowfast_multilabel'
 log_level = 'INFO'
+
 load_from = 'checkpoints/slowfast_r50_kinetics400_rgb.pth'
+
 randomness = dict(seed=42, deterministic=False)
 default_scope = 'mmaction'
 

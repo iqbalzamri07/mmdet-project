@@ -27,7 +27,7 @@ DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 720
 
 # Actions to record
-ACTIONS = ["smoking", "sitting", "standing", "walking", "calling", "playing_phone"]
+ACTIONS = ["sitting", "standing", "walking", "calling", "playing_phone"]
 
 
 class WebcamRecorder:
