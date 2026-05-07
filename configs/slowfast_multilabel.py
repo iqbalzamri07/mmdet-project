@@ -65,18 +65,18 @@ dataset_type = 'VideoDataset'
 
 train_pipeline = [
     dict(type='DecordInit', io_backend='disk'),
-    dict(type='SampleFrames', clip_len=32, frame_interval=2, num_clips=1),
+    dict(type='SampleFrames', clip_len=32, frame_interval=4, num_clips=3),
     dict(type='DecordDecode'),
-    # Just force resize to 224x224. Skips all crop bugs.
     dict(type='Resize', scale=(224, 224), keep_ratio=False), 
     dict(type='Flip', flip_ratio=0.5),
+    dict(type='ColorJitter', brightness=0.4, contrast=0.4, saturation=0.4), # <--- ADD THIS
     dict(type='FormatShape', input_format='NCTHW'),
     dict(type='PackActionInputs'),
 ]
 
 test_pipeline = [
     dict(type='DecordInit', io_backend='disk'),
-    dict(type='SampleFrames', clip_len=32, frame_interval=2, num_clips=1, test_mode=True),
+    dict(type='SampleFrames', clip_len=32, frame_interval=4, num_clips=3, test_mode=True),
     dict(type='DecordDecode'),
     # Same forced resize for validation
     dict(type='Resize', scale=(224, 224), keep_ratio=False),
