@@ -1,5 +1,6 @@
 _base_ = [
-    '../_base_/models/faster-rcnn_r50_fpn.py',
-    '../_base_/datasets/coco_detection.py',
-    '../_base_/schedules/schedule_1x.py', '../_base_/default_runtime.py'
+    '../../mmdetection/configs/_base_/models/faster-rcnn_r50_fpn.py',
+    '../../mmdetection/configs/_base_/datasets/coco_detection.py',
+    '../../mmdetection/configs/_base_/schedules/schedule_1x.py',
+    '../../mmdetection/configs/_base_/default_runtime.py'
 ]

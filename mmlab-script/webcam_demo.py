@@ -6,7 +6,7 @@ import cv2
 register_all_modules()
 
 # 2. Config + Checkpoint
-config_file = 'configs/faster_rcnn/faster-rcnn_r50_fpn_1x_coco.py'
+config_file = 'configs/mmdet/faster-rcnn_r50_fpn_1x_coco.py'
 checkpoint_file = 'https://download.openmmlab.com/mmdetection/v2.0/faster_rcnn/faster_rcnn_r50_fpn_1x_coco/faster_rcnn_r50_fpn_1x_coco_20200130-047c8118.pth'
 
 # 3. Load model
