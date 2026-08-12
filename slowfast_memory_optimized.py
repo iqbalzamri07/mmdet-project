@@ -33,8 +33,16 @@ else:
     MODEL_CONFIG = "configs/slowfast_custom.py"
     MODEL_CHECKPOINT = "work_dirs/slowfast_custom/best_acc_top1_epoch_*.pth"
 
-# FIXED: Consistent labels with training
-ACTION_LABELS = ["sitting", "standing", "walking", "calling", "playing_phone"]
+# FIXED: Consistent labels with training (ActionMark / slowfast_multilabel)
+ACTION_LABELS = [
+    "sitting",
+    "standing",
+    "walking",
+    "calling",
+    "playing_phone",
+    "smoking",
+    "eating",
+]
 NUM_CLASSES = len(ACTION_LABELS)
 
 # Thresholds for multi-label

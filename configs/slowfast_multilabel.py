@@ -1,17 +1,18 @@
 """
-SlowFast Configuration for MULTI-LABEL Action Recognition
-Uses NATIVE MMAction2 multi-class support (No custom datasets!)
+SlowFast Configuration for Action Recognition (ActionMark exports)
+Memory-tuned for ~4GB GPUs (e.g. RTX 2050).
+
+ActionMark labels one action per clip, so this uses single-label CE + AccMetric.
 """
 
 from mmengine.optim import CosineAnnealingLR, LinearLR
 from mmaction.models import (ActionDataPreprocessor, Recognizer3D,
                              ResNet3dSlowFast, SlowFastHead)
 
-# Classes
-ACTION_LABELS = ["sitting", "standing", "walking", "calling", "playing_phone"]
-NUM_CLASSES = 5
+# Classes (kept in sync by ActionMark export/train)
+ACTION_LABELS = ["sitting", "standing", "walking", "calling", "playing_phone", "smoking", "eating"]
+NUM_CLASSES = 7
 
-# Model settings
 model = dict(
     type=Recognizer3D,
     backbone=dict(
@@ -47,63 +48,53 @@ model = dict(
         num_classes=NUM_CLASSES,
         spatial_type='avg',
         dropout_ratio=0.5,
-        average_clips='prob',
-        # Multi-label loss
-        loss_cls=dict(
-            type='BCELossWithLogits',  
-            loss_weight=1.0
-        ),
-    ),
+        average_clips='prob'),
     data_preprocessor=dict(
         type=ActionDataPreprocessor,
         mean=[123.675, 116.28, 103.53],
         std=[58.395, 57.12, 57.375],
         format_shape='NCTHW'))
 
-# Standard MMAction2 Dataset
 dataset_type = 'VideoDataset'
 
 train_pipeline = [
     dict(type='DecordInit', io_backend='disk'),
-    dict(type='SampleFrames', clip_len=32, frame_interval=4, num_clips=3),
+    dict(type='SampleFrames', clip_len=16, frame_interval=4, num_clips=1),
     dict(type='DecordDecode'),
-    dict(type='Resize', scale=(224, 224), keep_ratio=False), 
+    dict(type='Resize', scale=(160, 160), keep_ratio=False),
     dict(type='Flip', flip_ratio=0.5),
-    dict(type='ColorJitter', brightness=0.4, contrast=0.4, saturation=0.4), # <--- ADD THIS
     dict(type='FormatShape', input_format='NCTHW'),
     dict(type='PackActionInputs'),
 ]
 
 test_pipeline = [
     dict(type='DecordInit', io_backend='disk'),
-    dict(type='SampleFrames', clip_len=32, frame_interval=4, num_clips=3, test_mode=True),
+    dict(type='SampleFrames', clip_len=16, frame_interval=4, num_clips=1, test_mode=True),
     dict(type='DecordDecode'),
-    # Same forced resize for validation
-    dict(type='Resize', scale=(224, 224), keep_ratio=False),
+    dict(type='Resize', scale=(160, 160), keep_ratio=False),
     dict(type='FormatShape', input_format='NCTHW'),
     dict(type='PackActionInputs'),
 ]
 
-# Data loaders - NATIVE MULTI-LABEL
 train_dataloader = dict(
-    batch_size=2,
-    num_workers=4,
-    persistent_workers=True,
+    batch_size=1,
+    num_workers=2,
+    persistent_workers=False,
     sampler=dict(type='DefaultSampler', shuffle=True),
     dataset=dict(
         type=dataset_type,
         ann_file='data/custom_actions_videos_clean/train_list.txt',
         data_prefix=dict(video='data/custom_actions_videos_clean'),
         pipeline=train_pipeline,
-        multi_class=True,   # <--- THIS NATIVELY HANDLES SPACE-SEPARATED LABELS
+        multi_class=False,
         num_classes=NUM_CLASSES,
     )
 )
 
 val_dataloader = dict(
-    batch_size=2,
-    num_workers=4,
-    persistent_workers=True,
+    batch_size=1,
+    num_workers=2,
+    persistent_workers=False,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type=dataset_type,
@@ -111,7 +102,7 @@ val_dataloader = dict(
         data_prefix=dict(video='data/custom_actions_videos_clean'),
         pipeline=test_pipeline,
         test_mode=True,
-        multi_class=True,   # <--- NATIVE MULTI-LABEL
+        multi_class=False,
         num_classes=NUM_CLASSES,
     )
 )
@@ -119,7 +110,8 @@ val_dataloader = dict(
 test_dataloader = val_dataloader
 
 optim_wrapper = dict(
-    optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=1e-4),
+    type='AmpOptimWrapper',
+    optimizer=dict(type='SGD', lr=0.005, momentum=0.9, weight_decay=1e-4),
     clip_grad=dict(max_norm=40, norm_type=2),
 )
 
@@ -128,7 +120,7 @@ param_scheduler = [
     dict(type=CosineAnnealingLR, T_max=40, eta_min=0, by_epoch=True, begin=0, end=50),
 ]
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=50, val_begin=100, val_interval=1)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=50, val_begin=1, val_interval=5)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
@@ -136,8 +128,8 @@ val_evaluator = dict(type='AccMetric')
 test_evaluator = dict(type='AccMetric')
 
 default_hooks = dict(
-    checkpoint=dict(type='CheckpointHook', interval=5, max_keep_ckpts=5, save_best='auto'),
-    logger=dict(type='LoggerHook', interval=10),
+    checkpoint=dict(type='CheckpointHook', interval=5, max_keep_ckpts=3, save_best='auto'),
+    logger=dict(type='LoggerHook', interval=5),
 )
 
 work_dir = 'work_dirs/slowfast_multilabel'
@@ -155,3 +147,4 @@ env_cfg = dict(
 )
 
 vis_backends = [dict(type='LocalVisBackend')]
+visualizer = dict(type='ActionVisualizer', vis_backends=vis_backends)

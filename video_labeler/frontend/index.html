@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ActionMark — Label · Train · Test</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <h1>ActionMark</h1>
+          <p class="tagline">Label · train · test SlowFast actions</p>
+        </div>
+      </div>
+      <nav class="mode-tabs" aria-label="Mode">
+        <button type="button" class="mode-tab active" data-mode="label" id="tabLabel">Label</button>
+        <button type="button" class="mode-tab" data-mode="test" id="tabTest">Test</button>
+      </nav>
+      <div class="top-actions" id="labelActions">
+        <label class="btn btn-primary file-btn">
+          Upload video
+          <input type="file" id="fileInput" accept="video/*" hidden />
+        </label>
+        <button class="btn btn-ghost" id="btnExport" type="button">Export dataset</button>
+        <button class="btn btn-accent" id="btnTrain" type="button">Train model</button>
+      </div>
+    </header>
+
+    <!-- LABEL MODE -->
+    <main class="layout" id="modeLabel">
+      <aside class="sidebar">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Library</h2>
+            <button class="linkish" id="btnRefresh" type="button">Refresh</button>
+          </div>
+          <ul class="video-list" id="videoList"></ul>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Classes</h2>
+          </div>
+          <div class="label-chips" id="labelChips"></div>
+          <div class="label-edit">
+            <input id="newLabelInput" type="text" placeholder="Add class (e.g. drinking)" />
+            <button class="btn btn-small" id="btnAddLabel" type="button">Add</button>
+          </div>
+        </section>
+
+        <section class="panel train-panel">
+          <div class="panel-head">
+            <h2>Training</h2>
+            <span class="status-pill" id="trainPill">idle</span>
+          </div>
+          <pre class="train-log" id="trainLog">No job running.</pre>
+          <button class="btn btn-ghost btn-small" id="btnStopTrain" type="button" hidden>Stop</button>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <div class="stage" id="stageEmpty">
+          <div class="empty-state">
+            <h2>Upload a video to start labeling</h2>
+            <p>Mark start/end frames for each action, optionally crop the person, then export and train.</p>
+          </div>
+        </div>
+
+        <div class="stage hidden" id="stageActive">
+          <div class="player-wrap">
+            <div class="canvas-stack" id="canvasStack">
+              <video id="video" playsinline></video>
+              <canvas id="overlay"></canvas>
+            </div>
+            <div class="transport">
+              <button class="icon-btn" id="btnPlay" type="button" title="Play/Pause">▶</button>
+              <button class="icon-btn" id="btnPrev" type="button" title="Prev frame">‹</button>
+              <button class="icon-btn" id="btnNext" type="button" title="Next frame">›</button>
+              <input type="range" id="seek" min="0" max="1000" value="0" />
+              <div class="timecode" id="timecode">0 / 0</div>
+            </div>
+            <div class="timeline-marks" id="timelineMarks"></div>
+          </div>
+
+          <div class="label-bar">
+            <label class="field">
+              <span>Action</span>
+              <select id="labelSelect"></select>
+            </label>
+            <button class="btn btn-ghost" id="btnMarkStart" type="button">Mark start</button>
+            <button class="btn btn-ghost" id="btnMarkEnd" type="button">Mark end</button>
+            <button class="btn btn-primary" id="btnSaveSeg" type="button">Save segment</button>
+            <button class="btn btn-ghost" id="btnToggleCrop" type="button">Draw crop</button>
+            <button class="btn btn-ghost" id="btnClearCrop" type="button">Clear crop</button>
+            <div class="pending" id="pendingInfo">Start: — · End: —</div>
+          </div>
+
+          <div class="segments-panel">
+            <div class="panel-head">
+              <h2>Segments</h2>
+              <button class="btn btn-small btn-primary" id="btnSaveAll" type="button">Save annotations</button>
+            </div>
+            <table class="seg-table">
+              <thead>
+                <tr>
+                  <th>Label</th>
+                  <th>Start</th>
+                  <th>End</th>
+                  <th>Crop</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="segBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- TEST MODE -->
+    <main class="layout hidden" id="modeTest">
+      <aside class="sidebar">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Model</h2>
+            <button class="linkish" id="btnRefreshModels" type="button">Refresh</button>
+          </div>
+          <label class="field block-field">
+            <span>Checkpoint</span>
+            <select id="modelSelect"></select>
+          </label>
+          <p class="hint" id="modelHint">Pick a trained .pth from work_dirs.</p>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Test video</h2>
+          </div>
+          <label class="btn btn-primary file-btn" style="width:100%;justify-content:center;">
+            Upload test video
+            <input type="file" id="testFileInput" accept="video/*" hidden />
+          </label>
+          <p class="hint" id="testFileName">No file selected</p>
+          <button class="btn btn-accent" id="btnRunTest" type="button" style="width:100%;margin-top:10px;">
+            Run inference
+          </button>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Job</h2>
+            <span class="status-pill" id="testPill">idle</span>
+          </div>
+          <pre class="train-log" id="testLog">Upload a video and run inference.</pre>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <div class="stage" id="testEmpty">
+          <div class="empty-state">
+            <h2>Test your trained model</h2>
+            <p>Select a checkpoint, upload a video, then run inference. Results show person boxes with action labels.</p>
+          </div>
+        </div>
+
+        <div class="stage hidden" id="testActive">
+          <div class="player-wrap">
+            <div class="canvas-stack result-stack">
+              <video id="resultVideo" controls playsinline></video>
+            </div>
+          </div>
+          <div class="segments-panel">
+            <div class="panel-head">
+              <h2>Predictions</h2>
+              <a class="btn btn-small btn-ghost" id="btnDownloadResult" href="#" download>Download video</a>
+            </div>
+            <table class="seg-table">
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Action</th>
+                  <th>Score</th>
+                  <th>Frames</th>
+                </tr>
+              </thead>
+              <tbody id="predBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" hidden></div>
+  </div>
+  <script src="/js/app.js"></script>
+</body>
+</html>

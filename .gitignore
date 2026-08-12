@@ -8,3 +8,4 @@ footage/
 *.pt
 work_dirs/
 process_video/
+video_labeler/data/

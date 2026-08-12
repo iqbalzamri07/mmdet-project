@@ -7,11 +7,19 @@ import os
 import shutil
 from pathlib import Path
 
-# Configuration - STICK TO 5 CLASSES SINCE YOU TRAINED ON 5
-DATA_ROOT = "data/custom_actions_videos"
+# Configuration — ActionMark export root (or hand-curated clips)
+DATA_ROOT = "data/actionmark_dataset"
 SYMLINK_ROOT = "data/custom_actions_videos_clean"
 
-ACTION_LABELS = ["sitting", "standing", "walking", "calling", "playing_phone"]
+ACTION_LABELS = [
+    "sitting",
+    "standing",
+    "walking",
+    "calling",
+    "playing_phone",
+    "smoking",
+    "eating",
+]
 NUM_CLASSES = len(ACTION_LABELS)
 
 def create_clean_dataset():

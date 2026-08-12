@@ -1,0 +1,473 @@
+"""FastAPI backend for video action labeling + SlowFast training."""
+
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import cv2
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+
+from . import config
+from .export import export_dataset, load_annotation, save_annotation, sync_train_config_labels
+from .media import is_browser_playable, probe_codecs
+from .infer import (
+    TEST_INPUT_DIR,
+    TEST_OUTPUT_DIR,
+    get_test_job,
+    list_checkpoints,
+    list_test_jobs,
+    start_inference_job,
+)
+from .train_runner import get_active_job, get_job, list_jobs, start_training, stop_training
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+app = FastAPI(title="ActionMark", version="1.0.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+class Segment(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    label: str
+    start_frame: int
+    end_frame: int
+    bbox: Optional[List[float]] = None  # [x1,y1,x2,y2] pixels or normalized
+    note: Optional[str] = ""
+
+
+class AnnotationPayload(BaseModel):
+    filename: str
+    fps: float = 30.0
+    width: int = 0
+    height: int = 0
+    total_frames: int = 0
+    duration: float = 0.0
+    segments: List[Segment] = []
+
+
+class ExportRequest(BaseModel):
+    clear_existing: bool = True
+    sync_labels: bool = True
+
+
+class TrainRequest(BaseModel):
+    export_first: bool = True
+    sync_labels: bool = True
+
+
+def _safe_stem(name: str) -> str:
+    stem = Path(name).stem
+    stem = re.sub(r"[^\w\-]+", "_", stem).strip("_")
+    return stem or f"video_{uuid.uuid4().hex[:8]}"
+
+
+def _video_meta(path: Path) -> Dict[str, Any]:
+    cap = cv2.VideoCapture(str(path))
+    if not cap.isOpened():
+        return {"fps": 30, "width": 0, "height": 0, "total_frames": 0, "duration": 0}
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 30)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    duration = total / fps if fps > 0 else 0
+    return {
+        "fps": fps,
+        "width": width,
+        "height": height,
+        "total_frames": total,
+        "duration": duration,
+    }
+
+
+@app.get("/api/health")
+def health():
+    return {"ok": True, "service": "ActionMark"}
+
+
+@app.get("/api/labels")
+def get_labels():
+    return {"labels": config.ACTION_LABELS}
+
+
+@app.put("/api/labels")
+def set_labels(payload: Dict[str, List[str]]):
+    labels = payload.get("labels") or []
+    labels = [l.strip().replace(" ", "_") for l in labels if l.strip()]
+    if not labels:
+        raise HTTPException(400, "labels cannot be empty")
+    # Persist into config module for this process
+    config.ACTION_LABELS = labels
+    labels_file = config.DATA_DIR / "labels.json"
+    with open(labels_file, "w", encoding="utf-8") as f:
+        json.dump({"labels": labels}, f, indent=2)
+    return {"labels": labels}
+
+
+def _load_persisted_labels():
+    labels_file = config.DATA_DIR / "labels.json"
+    if labels_file.exists():
+        with open(labels_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("labels"):
+            config.ACTION_LABELS = data["labels"]
+
+
+_load_persisted_labels()
+
+
+@app.get("/api/videos")
+def list_videos():
+    videos = []
+    for path in sorted(config.VIDEOS_DIR.iterdir()):
+        if path.suffix.lower() not in {".mp4", ".avi", ".mov", ".mkv", ".webm"}:
+            continue
+        ann = load_annotation(path.stem)
+        meta = _video_meta(path)
+        videos.append(
+            {
+                "id": path.stem,
+                "filename": path.name,
+                "size": path.stat().st_size,
+                "segments": len(ann.get("segments", [])) if ann else 0,
+                **meta,
+            }
+        )
+    return {"videos": videos}
+
+
+@app.post("/api/videos/upload")
+async def upload_video(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(400, "No filename")
+    ext = Path(file.filename).suffix.lower() or ".mp4"
+    if ext not in {".mp4", ".avi", ".mov", ".mkv", ".webm"}:
+        raise HTTPException(400, f"Unsupported format: {ext}")
+
+    stem = _safe_stem(file.filename)
+    raw_dest = config.VIDEOS_DIR / f"{stem}_upload{ext}"
+    while raw_dest.exists():
+        stem = f"{stem}_{uuid.uuid4().hex[:6]}"
+        raw_dest = config.VIDEOS_DIR / f"{stem}_upload{ext}"
+
+    with open(raw_dest, "wb") as out:
+        shutil.copyfileobj(file.file, out)
+
+    from .media import transcode_to_h264
+
+    vcodec, _ = probe_codecs(raw_dest)
+    final_path = config.VIDEOS_DIR / f"{stem}.mp4"
+    converted = False
+    try:
+        if is_browser_playable(raw_dest) and ext == ".mp4":
+            raw_dest.replace(final_path)
+        else:
+            # HEVC / exotic codecs → H.264 for Chrome/Firefox
+            transcode_to_h264(raw_dest, final_path)
+            converted = True
+            raw_dest.unlink(missing_ok=True)
+    except Exception as exc:
+        # Fall back to original bytes if conversion fails
+        if final_path.exists():
+            final_path.unlink(missing_ok=True)
+        fallback = config.VIDEOS_DIR / f"{stem}{ext}"
+        raw_dest.replace(fallback)
+        final_path = fallback
+        print(f"[upload] transcode failed, keeping original: {exc}")
+
+    meta = _video_meta(final_path)
+    meta["codec"] = probe_codecs(final_path)[0]
+    meta["converted_to_h264"] = converted
+    if vcodec:
+        meta["source_codec"] = vcodec
+    ann = {
+        "video_id": stem,
+        "filename": final_path.name,
+        **meta,
+        "segments": [],
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+    save_annotation(stem, ann)
+    return {
+        "ok": True,
+        "video": {"id": stem, "filename": final_path.name, **meta, "segments": 0},
+        "converted_to_h264": converted,
+        "message": (
+            f"Converted from {vcodec} to H.264 for browser playback"
+            if converted and vcodec
+            else None
+        ),
+    }
+
+
+@app.post("/api/videos/{video_id}/transcode")
+def transcode_video(video_id: str):
+    """Convert an existing library video to H.264 for browser playback."""
+    matches = sorted(config.VIDEOS_DIR.glob(f"{video_id}.*"))
+    if not matches:
+        raise HTTPException(404, "Video not found")
+    src = matches[0]
+    if is_browser_playable(src):
+        return {"ok": True, "already_playable": True, "filename": src.name}
+    try:
+        from .media import transcode_to_h264
+
+        out = config.VIDEOS_DIR / f"{video_id}.mp4"
+        tmp = config.VIDEOS_DIR / f".{video_id}_tmp.mp4"
+        transcode_to_h264(src, tmp)
+        if src.resolve() != out.resolve():
+            src.unlink(missing_ok=True)
+        tmp.replace(out)
+        meta = _video_meta(out)
+        ann = load_annotation(video_id) or {}
+        ann.update(
+            {
+                "filename": out.name,
+                **meta,
+                "codec": probe_codecs(out)[0],
+                "converted_to_h264": True,
+            }
+        )
+        save_annotation(video_id, ann)
+        return {"ok": True, "video": {"id": video_id, "filename": out.name, **meta}}
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@app.delete("/api/videos/{video_id}")
+def delete_video(video_id: str):
+    matches = list(config.VIDEOS_DIR.glob(f"{video_id}.*"))
+    if not matches:
+        raise HTTPException(404, "Video not found")
+    for m in matches:
+        m.unlink()
+    ann = config.ANNOTATIONS_DIR / f"{video_id}.json"
+    if ann.exists():
+        ann.unlink()
+    return {"ok": True}
+
+
+@app.get("/api/videos/{video_id}/file")
+def get_video_file(video_id: str):
+    matches = list(config.VIDEOS_DIR.glob(f"{video_id}.*"))
+    if not matches:
+        raise HTTPException(404, "Video not found")
+    path = matches[0]
+    media = {
+        ".mp4": "video/mp4",
+        ".webm": "video/webm",
+        ".mov": "video/quicktime",
+        ".avi": "video/x-msvideo",
+        ".mkv": "video/x-matroska",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media, filename=path.name)
+
+
+@app.get("/api/videos/{video_id}/meta")
+def get_video_meta(video_id: str):
+    matches = list(config.VIDEOS_DIR.glob(f"{video_id}.*"))
+    if not matches:
+        raise HTTPException(404, "Video not found")
+    meta = _video_meta(matches[0])
+    ann = load_annotation(video_id) or {}
+    return {
+        "id": video_id,
+        "filename": matches[0].name,
+        **meta,
+        "segments": ann.get("segments", []),
+    }
+
+
+@app.get("/api/annotations/{video_id}")
+def get_annotation(video_id: str):
+    ann = load_annotation(video_id)
+    if not ann:
+        raise HTTPException(404, "Annotation not found")
+    return ann
+
+
+@app.put("/api/annotations/{video_id}")
+def put_annotation(video_id: str, payload: AnnotationPayload):
+    matches = list(config.VIDEOS_DIR.glob(f"{video_id}.*"))
+    if not matches:
+        raise HTTPException(404, "Video not found")
+    for seg in payload.segments:
+        if seg.label not in config.ACTION_LABELS:
+            raise HTTPException(400, f"Unknown label: {seg.label}")
+        if seg.end_frame < seg.start_frame:
+            raise HTTPException(400, "end_frame must be >= start_frame")
+    data = payload.model_dump()
+    data["video_id"] = video_id
+    path = save_annotation(video_id, data)
+    return {"ok": True, "path": str(path), "segments": len(payload.segments)}
+
+
+@app.post("/api/export")
+def api_export(req: ExportRequest):
+    if req.sync_labels:
+        sync_train_config_labels()
+    summary = export_dataset(clear_existing=req.clear_existing)
+    if not summary.get("ok"):
+        raise HTTPException(400, summary.get("error", "Export failed"))
+    return summary
+
+
+@app.post("/api/train")
+def api_train(req: TrainRequest):
+    result = start_training(export_first=req.export_first, sync_labels=req.sync_labels)
+    if not result.get("ok"):
+        raise HTTPException(409, result.get("error", "Cannot start training"))
+    return result
+
+
+@app.get("/api/train/status")
+def train_status(job_id: Optional[str] = None):
+    if job_id:
+        job = get_job(job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        return {"job": job}
+    active = get_active_job()
+    return {"job": active, "jobs": list_jobs()[:10]}
+
+
+@app.post("/api/train/stop/{job_id}")
+def train_stop(job_id: str):
+    result = stop_training(job_id)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Stop failed"))
+    return result
+
+
+@app.get("/api/train/log/{job_id}")
+def train_log(job_id: str, tail: int = 200):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    log_path = Path(job.get("log_path", ""))
+    if not log_path.exists():
+        return {"lines": []}
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return {"lines": lines[-tail:]}
+
+
+# ---------- Test / inference ----------
+class TestRequest(BaseModel):
+    checkpoint: str  # filename under work_dirs/slowfast_multilabel
+    video_id: Optional[str] = None  # use library video
+    # or upload via multipart separately
+
+
+@app.get("/api/models")
+def api_models():
+    return {"models": list_checkpoints()}
+
+
+@app.post("/api/test/upload")
+async def test_upload(file: UploadFile = File(...)):
+    if not file.filename:
+        raise HTTPException(400, "No filename")
+    ext = Path(file.filename).suffix.lower() or ".mp4"
+    if ext not in {".mp4", ".avi", ".mov", ".mkv", ".webm"}:
+        raise HTTPException(400, f"Unsupported format: {ext}")
+    stem = _safe_stem(file.filename)
+    dest = TEST_INPUT_DIR / f"{stem}_{uuid.uuid4().hex[:6]}{ext}"
+    with open(dest, "wb") as out:
+        shutil.copyfileobj(file.file, out)
+    # Convert to H.264 if needed for consistency
+    try:
+        from .media import is_browser_playable, transcode_to_h264
+
+        if not is_browser_playable(dest):
+            h264 = dest.with_suffix(".mp4")
+            tmp = dest.with_name(f".{dest.stem}_tmp.mp4")
+            transcode_to_h264(dest, tmp)
+            if dest.resolve() != h264.resolve():
+                dest.unlink(missing_ok=True)
+            tmp.replace(h264)
+            dest = h264
+    except Exception as exc:
+        print(f"[test upload] transcode skipped: {exc}")
+    return {"ok": True, "path": str(dest), "filename": dest.name, "id": dest.stem}
+
+
+@app.post("/api/test/run")
+async def test_run(
+    checkpoint: str = Form(...),
+    video_id: Optional[str] = Form(None),
+    test_video: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+):
+    """
+    Start inference.
+    Provide one of: library video_id, previously uploaded test_video filename, or file upload.
+    checkpoint: e.g. best_acc_top1_epoch_5.pth
+    """
+    ckpt = config.WORK_DIR / checkpoint
+    if not ckpt.exists():
+        raise HTTPException(404, f"Checkpoint not found: {checkpoint}")
+
+    video_path: Optional[Path] = None
+    if file is not None and file.filename:
+        ext = Path(file.filename).suffix.lower() or ".mp4"
+        stem = _safe_stem(file.filename)
+        video_path = TEST_INPUT_DIR / f"{stem}_{uuid.uuid4().hex[:6]}{ext}"
+        with open(video_path, "wb") as out:
+            shutil.copyfileobj(file.file, out)
+    elif test_video:
+        candidate = TEST_INPUT_DIR / test_video
+        if not candidate.exists():
+            raise HTTPException(404, "Test video not found")
+        video_path = candidate
+    elif video_id:
+        matches = list(config.VIDEOS_DIR.glob(f"{video_id}.*"))
+        if not matches:
+            raise HTTPException(404, "Library video not found")
+        video_path = matches[0]
+    else:
+        raise HTTPException(400, "Provide file, test_video, or video_id")
+
+    result = start_inference_job(video_path, ckpt)
+    return result
+
+
+@app.get("/api/test/status")
+def test_status(job_id: Optional[str] = None):
+    if job_id:
+        job = get_test_job(job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+        return {"job": job}
+    return {"jobs": list_test_jobs()}
+
+
+@app.get("/api/test/result/{job_id}/video")
+def test_result_video(job_id: str):
+    job = get_test_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    path = Path(job.get("output_video") or TEST_OUTPUT_DIR / f"{job_id}.mp4")
+    if not path.exists():
+        raise HTTPException(404, "Result video not ready")
+    return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+
+# Serve frontend last
+if FRONTEND_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

@@ -7,9 +7,17 @@ from mmengine.optim import CosineAnnealingLR, LinearLR
 from mmaction.models import (ActionDataPreprocessor, Recognizer3D,
                              ResNet3dSlowFast, SlowFastHead)
 
-# FIXED: Consistent 6 classes
-ACTION_LABELS = ["smoking", "sitting", "standing", "walking", "calling", "playing_phone"]
-NUM_CLASSES = 6
+# Classes (aligned with ActionMark)
+ACTION_LABELS = [
+    "sitting",
+    "standing",
+    "walking",
+    "calling",
+    "playing_phone",
+    "smoking",
+    "eating",
+]
+NUM_CLASSES = len(ACTION_LABELS)
 
 model = dict(
     type=Recognizer3D,
