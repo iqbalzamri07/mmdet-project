@@ -163,46 +163,72 @@
     });
   }
 
-  function renderVideoList() {
-    const list = $("videoList");
-    const countEl = $("libraryCount");
+  function appendVideoItem(list, v) {
+    const li = document.createElement("li");
+    if (v.id === state.videoId) li.classList.add("active");
+    li.innerHTML = `
+      <div class="video-row">
+        <div class="video-info">
+          <div class="name">${v.filename}</div>
+          <div class="meta">${Math.round(v.duration || 0)}s · ${v.segments || 0} segments · ${v.total_frames || 0} frames</div>
+        </div>
+        <button type="button" class="btn-delete-video" title="Delete video" aria-label="Delete ${v.filename}">×</button>
+      </div>`;
+    li.querySelector(".video-info").onclick = () => selectVideo(v.id);
+    li.querySelector(".btn-delete-video").onclick = (e) => {
+      e.stopPropagation();
+      deleteVideo(v.id, v.filename);
+    };
+    list.appendChild(li);
+  }
+
+  function appendVideoGroup(list, items) {
     list.innerHTML = "";
+    if (!items.length) {
+      const empty = document.createElement("li");
+      empty.className = "meta video-group-empty";
+      empty.textContent = "None";
+      list.appendChild(empty);
+      return;
+    }
+    items.forEach((v) => appendVideoItem(list, v));
+  }
+
+  function renderVideoList() {
+    const needList = $("videoListNeed");
+    const hasList = $("videoListHas");
+    const countEl = $("libraryCount");
     const videos = filteredVideos();
     const q = (state.videoQuery || "").trim();
     const total = state.videos.length;
+    const unlabeled = videos.filter((v) => !(v.segments > 0));
+    const labeled = videos.filter((v) => v.segments > 0);
+    const labeledAll = state.videos.filter((v) => (v.segments || 0) > 0).length;
     if (countEl) {
+      const labeledBit = `${labeledAll} labeled`;
       if (q) {
-        countEl.textContent = `${videos.length} of ${total} videos`;
+        countEl.textContent = `${videos.length} of ${total} · ${labeledBit}`;
       } else {
-        countEl.textContent = `${total} video${total === 1 ? "" : "s"}`;
+        countEl.textContent = `${total} video${total === 1 ? "" : "s"} · ${labeledBit}`;
       }
     }
+    const needTitle = $("needLabelsTitle");
+    const hasTitle = $("hasSegmentsTitle");
+    if (needTitle) needTitle.textContent = `Need labels (${unlabeled.length})`;
+    if (hasTitle) hasTitle.textContent = `Has segments (${labeled.length})`;
     if (!state.videos.length) {
-      list.innerHTML = '<li class="meta">No videos yet</li>';
+      needList.innerHTML = '<li class="meta">No videos yet</li>';
+      hasList.innerHTML = "";
+      if (hasTitle) hasTitle.textContent = "Has segments (0)";
       return;
     }
     if (!videos.length) {
-      list.innerHTML = '<li class="meta">No videos match that search</li>';
+      needList.innerHTML = '<li class="meta">No videos match that search</li>';
+      hasList.innerHTML = '<li class="meta">No videos match that search</li>';
       return;
     }
-    videos.forEach((v) => {
-      const li = document.createElement("li");
-      if (v.id === state.videoId) li.classList.add("active");
-      li.innerHTML = `
-        <div class="video-row">
-          <div class="video-info">
-            <div class="name">${v.filename}</div>
-            <div class="meta">${Math.round(v.duration || 0)}s · ${v.segments || 0} segments · ${v.total_frames || 0} frames</div>
-          </div>
-          <button type="button" class="btn-delete-video" title="Delete video" aria-label="Delete ${v.filename}">×</button>
-        </div>`;
-      li.querySelector(".video-info").onclick = () => selectVideo(v.id);
-      li.querySelector(".btn-delete-video").onclick = (e) => {
-        e.stopPropagation();
-        deleteVideo(v.id, v.filename);
-      };
-      list.appendChild(li);
-    });
+    appendVideoGroup(needList, unlabeled);
+    appendVideoGroup(hasList, labeled);
   }
 
   async function deleteVideo(id, filename) {
@@ -218,6 +244,7 @@
         videoEl.load();
         $("stageActive").classList.add("hidden");
         $("stageEmpty").classList.remove("hidden");
+        $("segmentsPanel").classList.add("hidden");
       }
       await loadVideos();
       await loadLabelCounts();
@@ -357,6 +384,7 @@
     updatePending();
     $("stageEmpty").classList.add("hidden");
     $("stageActive").classList.remove("hidden");
+    $("segmentsPanel").classList.remove("hidden");
     renderVideoList();
 
     const meta = await api(`/api/videos/${id}/meta`);

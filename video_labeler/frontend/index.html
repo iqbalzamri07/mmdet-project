@@ -38,24 +38,6 @@
       <aside class="sidebar">
         <section class="panel">
           <div class="panel-head">
-            <h2>Library</h2>
-            <div class="panel-head-actions">
-              <span class="count-total" id="libraryCount">0 videos</span>
-              <button class="linkish" id="btnRefresh" type="button">Refresh</button>
-            </div>
-          </div>
-          <input
-            id="videoSearch"
-            class="video-search"
-            type="search"
-            placeholder="Search videos…"
-            autocomplete="off"
-          />
-          <ul class="video-list" id="videoList"></ul>
-        </section>
-
-        <section class="panel">
-          <div class="panel-head">
             <h2>Classes</h2>
             <span class="count-total" id="classCountTotal">0 total</span>
           </div>
@@ -116,26 +98,53 @@
             <button class="btn btn-ghost" id="btnClearCrop" type="button">Clear crop</button>
             <div class="pending" id="pendingInfo">Start: — · End: —</div>
           </div>
+        </div>
 
-          <div class="segments-panel">
-            <div class="panel-head">
-              <h2>Segments</h2>
-              <button class="btn btn-small btn-primary" id="btnSaveAll" type="button">Save annotations</button>
+        <section class="panel library-panel">
+          <div class="panel-head">
+            <h2>Library</h2>
+            <div class="panel-head-actions">
+              <span class="count-total" id="libraryCount">0 videos</span>
+              <button class="linkish" id="btnRefresh" type="button">Refresh</button>
             </div>
-            <table class="seg-table">
-              <thead>
-                <tr>
-                  <th>Posture</th>
-                  <th>Activity</th>
-                  <th>Start</th>
-                  <th>End</th>
-                  <th>Crop</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody id="segBody"></tbody>
-            </table>
           </div>
+          <input
+            id="videoSearch"
+            class="video-search"
+            type="search"
+            placeholder="Search videos…"
+            autocomplete="off"
+          />
+          <div class="library-columns">
+            <div class="library-col">
+              <h3 class="video-group-title" id="needLabelsTitle">Need labels (0)</h3>
+              <ul class="video-list" id="videoListNeed"></ul>
+            </div>
+            <div class="library-col">
+              <h3 class="video-group-title" id="hasSegmentsTitle">Has segments (0)</h3>
+              <ul class="video-list" id="videoListHas"></ul>
+            </div>
+          </div>
+        </section>
+
+        <div class="segments-panel hidden" id="segmentsPanel">
+          <div class="panel-head">
+            <h2>Segments</h2>
+            <button class="btn btn-small btn-primary" id="btnSaveAll" type="button">Save annotations</button>
+          </div>
+          <table class="seg-table">
+            <thead>
+              <tr>
+                <th>Posture</th>
+                <th>Activity</th>
+                <th>Start</th>
+                <th>End</th>
+                <th>Crop</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="segBody"></tbody>
+          </table>
         </div>
       </section>
     </main>
