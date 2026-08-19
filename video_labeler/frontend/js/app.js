@@ -439,7 +439,8 @@
     const files = [...(e.target.files || [])];
     e.target.value = "";
     if (!files.length) return;
-    const ok = [];
+    const uploaded = [];
+    const skipped = [];
     const failed = [];
     for (let i = 0; i < files.length; i++) {
       toast(`Uploading ${i + 1}/${files.length}: ${files[i].name}`, "ok");
@@ -447,28 +448,39 @@
       fd.append("file", files[i]);
       try {
         const data = await api("/api/videos/upload", { method: "POST", body: fd });
-        ok.push(data);
+        if (data.skipped) skipped.push(data);
+        else uploaded.push(data);
       } catch (err) {
         failed.push(`${files[i].name}: ${err.message || "failed"}`);
       }
     }
     try {
       await loadVideos();
-      if (ok.length && ok[ok.length - 1].video) {
-        await selectVideo(ok[ok.length - 1].video.id);
+      const lastNew = uploaded[uploaded.length - 1];
+      if (lastNew?.video) {
+        await selectVideo(lastNew.video.id);
       }
     } catch (err) {
       toast(err.message, "error");
       return;
     }
-    if (!ok.length) {
+    if (!uploaded.length && !skipped.length) {
       toast(failed[0] || "Upload failed", "error");
     } else if (failed.length) {
-      toast(`Uploaded ${ok.length}, ${failed.length} failed`, "error");
-    } else if (ok.length === 1 && ok[0].converted_to_h264) {
-      toast(ok[0].message || "Converted to H.264 for playback", "ok");
+      toast(`Uploaded ${uploaded.length}, skipped ${skipped.length}, ${failed.length} failed`, "error");
+    } else if (uploaded.length === 1 && uploaded[0].converted_to_h264) {
+      toast(uploaded[0].message || "Converted to H.264 for playback", "ok");
+    } else if (uploaded.length && skipped.length) {
+      toast(`Uploaded ${uploaded.length}, skipped ${skipped.length} (already in library)`, "ok");
+    } else if (skipped.length && !uploaded.length) {
+      toast(
+        skipped.length === 1
+          ? skipped[0].message || "Already in library"
+          : `Skipped ${skipped.length} — already in library`,
+        "ok"
+      );
     } else {
-      toast(ok.length === 1 ? "Video uploaded" : `Uploaded ${ok.length} videos`, "ok");
+      toast(uploaded.length === 1 ? "Video uploaded" : `Uploaded ${uploaded.length} videos`, "ok");
     }
   });
 

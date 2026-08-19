@@ -183,6 +183,15 @@ def list_videos():
     return {"videos": videos}
 
 
+def _find_library_video(stem: str) -> Optional[Path]:
+    """Return an existing library video path for this id, if any."""
+    video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+    for path in sorted(config.VIDEOS_DIR.glob(f"{stem}.*")):
+        if path.suffix.lower() in video_exts and not path.name.startswith("."):
+            return path
+    return None
+
+
 def _ingest_uploaded_video(file: UploadFile) -> Dict[str, Any]:
     if not file.filename:
         raise HTTPException(400, "No filename")
@@ -191,6 +200,22 @@ def _ingest_uploaded_video(file: UploadFile) -> Dict[str, Any]:
         raise HTTPException(400, f"Unsupported format: {ext}")
 
     stem = _safe_stem(file.filename)
+    existing = _find_library_video(stem)
+    if existing:
+        ann = load_annotation(stem) or {}
+        meta = _video_meta(existing)
+        return {
+            "ok": True,
+            "skipped": True,
+            "video": {
+                "id": stem,
+                "filename": existing.name,
+                **meta,
+                "segments": len(ann.get("segments", [])),
+            },
+            "message": f"Skipped {file.filename} — already in library",
+        }
+
     raw_dest = config.VIDEOS_DIR / f"{stem}_upload{ext}"
     while raw_dest.exists():
         stem = f"{stem}_{uuid.uuid4().hex[:6]}"
@@ -253,29 +278,39 @@ async def upload_video(file: List[UploadFile] = File(...)):
         raise HTTPException(400, "No filename")
 
     results: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
     errors: List[Dict[str, str]] = []
     for item in uploads:
         try:
-            results.append(_ingest_uploaded_video(item))
+            result = _ingest_uploaded_video(item)
+            if result.get("skipped"):
+                skipped.append(result)
+            else:
+                results.append(result)
         except HTTPException as exc:
             errors.append({"filename": item.filename or "", "error": str(exc.detail)})
         except Exception as exc:
             errors.append({"filename": item.filename or "", "error": str(exc)})
 
-    if not results:
+    if not results and not skipped:
         raise HTTPException(400, errors[0]["error"] if errors else "Upload failed")
-    if len(results) == 1 and not errors:
-        return results[0]
+    if len(uploads) == 1 and not errors:
+        out = results[0] if results else skipped[0]
+        return out
+    last_video = (results or skipped)[-1].get("video")
     return {
         "ok": True,
-        "video": results[-1]["video"],
+        "video": last_video,
         "videos": [r["video"] for r in results],
         "uploaded": len(results),
+        "skipped": len(skipped),
+        "skipped_videos": [r["video"] for r in skipped],
         "failed": len(errors),
         "errors": errors,
         "converted_to_h264": any(r.get("converted_to_h264") for r in results),
         "message": (
             f"Uploaded {len(results)} video{'s' if len(results) != 1 else ''}"
+            + (f", skipped {len(skipped)}" if skipped else "")
             + (f", {len(errors)} failed" if errors else "")
         ),
     }
