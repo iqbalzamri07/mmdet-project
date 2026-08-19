@@ -9,6 +9,8 @@
     totalCount: 0,
     videos: [],
     videoQuery: "",
+    videoPage: { need: 1, has: 1 },
+    videoPaging: { total_all: 0, total_labeled: 0, needTotal: 0, hasTotal: 0, needPages: 1, hasPages: 1 },
     videoId: null,
     meta: null,
     segments: [],
@@ -153,16 +155,6 @@
     renderLabels();
   }
 
-  function filteredVideos() {
-    const q = (state.videoQuery || "").trim().toLowerCase();
-    if (!q) return state.videos;
-    return state.videos.filter((v) => {
-      const name = (v.filename || "").toLowerCase();
-      const id = (v.id || "").toLowerCase();
-      return name.includes(q) || id.includes(q);
-    });
-  }
-
   function appendVideoItem(list, v) {
     const li = document.createElement("li");
     if (v.id === state.videoId) li.classList.add("active");
@@ -182,53 +174,65 @@
     list.appendChild(li);
   }
 
-  function appendVideoGroup(list, items) {
-    list.innerHTML = "";
-    if (!items.length) {
-      const empty = document.createElement("li");
-      empty.className = "meta video-group-empty";
-      empty.textContent = "None";
-      list.appendChild(empty);
-      return;
-    }
-    items.forEach((v) => appendVideoItem(list, v));
-  }
-
   function renderVideoList() {
     const needList = $("videoListNeed");
     const hasList = $("videoListHas");
     const countEl = $("libraryCount");
-    const videos = filteredVideos();
-    const q = (state.videoQuery || "").trim();
-    const total = state.videos.length;
-    const unlabeled = videos.filter((v) => !(v.segments > 0));
-    const labeled = videos.filter((v) => v.segments > 0);
-    const labeledAll = state.videos.filter((v) => (v.segments || 0) > 0).length;
+    const { total_all, total_labeled, needTotal, hasTotal, needPages, hasPages } = state.videoPaging;
     if (countEl) {
-      const labeledBit = `${labeledAll} labeled`;
+      const q = (state.videoQuery || "").trim();
       if (q) {
-        countEl.textContent = `${videos.length} of ${total} · ${labeledBit}`;
+        countEl.textContent = `${needTotal + hasTotal} results · ${total_all} total · ${total_labeled} labeled`;
       } else {
-        countEl.textContent = `${total} video${total === 1 ? "" : "s"} · ${labeledBit}`;
+        countEl.textContent = `${total_all} video${total_all === 1 ? "" : "s"} · ${total_labeled} labeled`;
       }
     }
     const needTitle = $("needLabelsTitle");
     const hasTitle = $("hasSegmentsTitle");
-    if (needTitle) needTitle.textContent = `Need labels (${unlabeled.length})`;
-    if (hasTitle) hasTitle.textContent = `Has segments (${labeled.length})`;
-    if (!state.videos.length) {
+    if (needTitle) needTitle.textContent = `Need labels (${needTotal})`;
+    if (hasTitle) hasTitle.textContent = `Has segments (${hasTotal})`;
+
+    needList.innerHTML = "";
+    hasList.innerHTML = "";
+
+    const needVideos = state.videos.filter((v) => !(v.segments > 0));
+    const hasVideos = state.videos.filter((v) => v.segments > 0);
+
+    if (!needVideos.length && !hasVideos.length && !total_all) {
       needList.innerHTML = '<li class="meta">No videos yet</li>';
-      hasList.innerHTML = "";
-      if (hasTitle) hasTitle.textContent = "Has segments (0)";
       return;
     }
-    if (!videos.length) {
-      needList.innerHTML = '<li class="meta">No videos match that search</li>';
-      hasList.innerHTML = '<li class="meta">No videos match that search</li>';
-      return;
+    if (!needVideos.length) {
+      needList.innerHTML = '<li class="meta">None on this page</li>';
+    } else {
+      needVideos.forEach((v) => appendVideoItem(needList, v));
     }
-    appendVideoGroup(needList, unlabeled);
-    appendVideoGroup(hasList, labeled);
+    if (state.videoPage.need < needPages) {
+      const btn = document.createElement("li");
+      btn.className = "load-more";
+      btn.innerHTML = `<button class="btn btn-ghost btn-small" type="button">Load more…</button>`;
+      btn.querySelector("button").onclick = () => {
+        state.videoPage.need++;
+        fetchVideos(false);
+      };
+      needList.appendChild(btn);
+    }
+
+    if (!hasVideos.length) {
+      hasList.innerHTML = '<li class="meta">None on this page</li>';
+    } else {
+      hasVideos.forEach((v) => appendVideoItem(hasList, v));
+    }
+    if (state.videoPage.has < hasPages) {
+      const btn = document.createElement("li");
+      btn.className = "load-more";
+      btn.innerHTML = `<button class="btn btn-ghost btn-small" type="button">Load more…</button>`;
+      btn.querySelector("button").onclick = () => {
+        state.videoPage.has++;
+        fetchVideos(false);
+      };
+      hasList.appendChild(btn);
+    }
   }
 
   async function deleteVideo(id, filename) {
@@ -370,10 +374,49 @@
     await loadLabelCounts();
   }
 
-  async function loadVideos() {
-    const data = await api("/api/videos");
-    state.videos = data.videos || [];
+  const PER_PAGE = 50;
+
+  async function fetchVideos(reset = true) {
+    if (reset) {
+      state.videoPage = { need: 1, has: 1 };
+      state.videos = [];
+    }
+    const q = (state.videoQuery || "").trim();
+    const params = new URLSearchParams({ per_page: PER_PAGE });
+    if (q) params.set("q", q);
+
+    params.set("page", state.videoPage.need);
+    params.set("labeled", "false");
+    const needData = await api(`/api/videos?${params}`);
+
+    params.set("page", state.videoPage.has);
+    params.set("labeled", "true");
+    const hasData = await api(`/api/videos?${params}`);
+
+    const needVideos = needData.videos || [];
+    const hasVideos = hasData.videos || [];
+
+    if (reset) {
+      state.videos = [...needVideos, ...hasVideos];
+    } else {
+      const existingIds = new Set(state.videos.map((v) => v.id));
+      needVideos.forEach((v) => { if (!existingIds.has(v.id)) state.videos.push(v); });
+      hasVideos.forEach((v) => { if (!existingIds.has(v.id)) state.videos.push(v); });
+    }
+
+    state.videoPaging = {
+      total_all: needData.total_all || 0,
+      total_labeled: needData.total_labeled || 0,
+      needTotal: needData.total || 0,
+      hasTotal: hasData.total || 0,
+      needPages: needData.pages || 1,
+      hasPages: hasData.pages || 1,
+    };
     renderVideoList();
+  }
+
+  async function loadVideos() {
+    await fetchVideos(true);
   }
 
   async function selectVideo(id) {
@@ -486,9 +529,11 @@
 
   $("btnRefresh").onclick = () => loadVideos().catch((e) => toast(e.message, "error"));
 
+  let _searchTimer = null;
   $("videoSearch").addEventListener("input", (e) => {
     state.videoQuery = e.target.value;
-    renderVideoList();
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(() => fetchVideos(true), 300);
   });
 
   $("btnAddLabel").onclick = async () => {

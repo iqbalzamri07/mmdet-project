@@ -270,6 +270,16 @@ html, body {
   font-size: 0.78rem;
   background: transparent;
 }
+.video-list li.load-more {
+  border: 0;
+  padding: 4px 0;
+  text-align: center;
+  background: transparent;
+}
+.video-list li.load-more:hover {
+  border-color: transparent;
+  background: transparent;
+}
 
 .video-list li {
   border: 1px solid var(--line);

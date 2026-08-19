@@ -163,24 +163,102 @@ def _load_persisted_labels():
 _load_persisted_labels()
 
 
-@app.get("/api/videos")
-def list_videos():
-    videos = []
+_video_index_cache: List[Dict[str, Any]] = []
+_video_index_mtime: float = 0.0
+
+
+def _rebuild_video_index() -> List[Dict[str, Any]]:
+    """Build a fast index from annotation JSONs + video directory."""
+    global _video_index_cache, _video_index_mtime
+    video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+    videos_on_disk = {}
     for path in sorted(config.VIDEOS_DIR.iterdir()):
-        if path.suffix.lower() not in {".mp4", ".avi", ".mov", ".mkv", ".webm"}:
-            continue
-        ann = load_annotation(path.stem)
-        meta = _video_meta(path)
-        videos.append(
-            {
-                "id": path.stem,
-                "filename": path.name,
-                "size": path.stat().st_size,
-                "segments": len(ann.get("segments", [])) if ann else 0,
-                **meta,
+        if path.suffix.lower() in video_exts:
+            videos_on_disk[path.stem] = path
+
+    index = []
+    for stem, path in videos_on_disk.items():
+        ann = load_annotation(stem)
+        if ann and ann.get("fps"):
+            meta = {
+                "fps": ann.get("fps", 30),
+                "width": ann.get("width", 0),
+                "height": ann.get("height", 0),
+                "total_frames": ann.get("total_frames", 0),
+                "duration": ann.get("duration", 0),
             }
+        else:
+            meta = _video_meta(path)
+            if ann is None:
+                ann = {
+                    "video_id": stem,
+                    "filename": path.name,
+                    **meta,
+                    "segments": [],
+                }
+                save_annotation(stem, ann)
+        index.append({
+            "id": stem,
+            "filename": path.name,
+            "segments": len(ann.get("segments", [])) if ann else 0,
+            **meta,
+        })
+    _video_index_cache = index
+    _video_index_mtime = max(
+        (p.stat().st_mtime for p in config.ANNOTATIONS_DIR.glob("*.json")),
+        default=0.0,
+    )
+    return index
+
+
+def _get_video_index(force: bool = False) -> List[Dict[str, Any]]:
+    """Return cached video index, rebuilding if annotations changed."""
+    global _video_index_cache, _video_index_mtime
+    if not force and _video_index_cache:
+        latest = max(
+            (p.stat().st_mtime for p in config.ANNOTATIONS_DIR.glob("*.json")),
+            default=0.0,
         )
-    return {"videos": videos}
+        dir_count = sum(
+            1 for p in config.VIDEOS_DIR.iterdir()
+            if p.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+        )
+        if latest <= _video_index_mtime and dir_count == len(_video_index_cache):
+            return _video_index_cache
+    return _rebuild_video_index()
+
+
+@app.get("/api/videos")
+def list_videos(
+    q: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 100,
+    labeled: Optional[bool] = None,
+):
+    index = _get_video_index()
+    filtered = index
+    if q:
+        ql = q.strip().lower()
+        filtered = [v for v in filtered if ql in v["filename"].lower() or ql in v["id"].lower()]
+    if labeled is True:
+        filtered = [v for v in filtered if v["segments"] > 0]
+    elif labeled is False:
+        filtered = [v for v in filtered if v["segments"] == 0]
+    total = len(filtered)
+    total_all = len(index)
+    total_labeled = sum(1 for v in index if v["segments"] > 0)
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_videos = filtered[start:end]
+    return {
+        "videos": page_videos,
+        "total": total,
+        "total_all": total_all,
+        "total_labeled": total_labeled,
+        "page": page,
+        "per_page": per_page,
+        "pages": (total + per_page - 1) // per_page if per_page else 1,
+    }
 
 
 def _find_library_video(stem: str) -> Optional[Path]:
@@ -360,6 +438,7 @@ def delete_video(video_id: str):
     ann = config.ANNOTATIONS_DIR / f"{video_id}.json"
     if ann.exists():
         ann.unlink()
+    _get_video_index(force=True)
     return {"ok": True}
 
 
@@ -419,6 +498,7 @@ def put_annotation(video_id: str, payload: AnnotationPayload):
     data = payload.model_dump()
     data["video_id"] = video_id
     path = save_annotation(video_id, data)
+    _get_video_index(force=True)
     return {"ok": True, "path": str(path), "segments": len(payload.segments)}
 
 
