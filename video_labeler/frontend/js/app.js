@@ -382,21 +382,39 @@
 
   // --- Events ---
   $("fileInput").addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const fd = new FormData();
-    fd.append("file", file);
-    try {
-      const data = await api("/api/videos/upload", { method: "POST", body: fd });
-      if (data.converted_to_h264) {
-        toast(data.message || "Converted to H.264 for playback", "ok");
+    const files = [...(e.target.files || [])];
+    e.target.value = "";
+    if (!files.length) return;
+    const ok = [];
+    const failed = [];
+    for (let i = 0; i < files.length; i++) {
+      toast(`Uploading ${i + 1}/${files.length}: ${files[i].name}`, "ok");
+      const fd = new FormData();
+      fd.append("file", files[i]);
+      try {
+        const data = await api("/api/videos/upload", { method: "POST", body: fd });
+        ok.push(data);
+      } catch (err) {
+        failed.push(`${files[i].name}: ${err.message || "failed"}`);
       }
+    }
+    try {
       await loadVideos();
-      await selectVideo(data.video.id);
+      if (ok.length && ok[ok.length - 1].video) {
+        await selectVideo(ok[ok.length - 1].video.id);
+      }
     } catch (err) {
       toast(err.message, "error");
-    } finally {
-      e.target.value = "";
+      return;
+    }
+    if (!ok.length) {
+      toast(failed[0] || "Upload failed", "error");
+    } else if (failed.length) {
+      toast(`Uploaded ${ok.length}, ${failed.length} failed`, "error");
+    } else if (ok.length === 1 && ok[0].converted_to_h264) {
+      toast(ok[0].message || "Converted to H.264 for playback", "ok");
+    } else {
+      toast(ok.length === 1 ? "Video uploaded" : `Uploaded ${ok.length} videos`, "ok");
     }
   });
 

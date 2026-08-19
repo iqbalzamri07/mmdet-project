@@ -183,8 +183,7 @@ def list_videos():
     return {"videos": videos}
 
 
-@app.post("/api/videos/upload")
-async def upload_video(file: UploadFile = File(...)):
+def _ingest_uploaded_video(file: UploadFile) -> Dict[str, Any]:
     if not file.filename:
         raise HTTPException(400, "No filename")
     ext = Path(file.filename).suffix.lower() or ".mp4"
@@ -243,6 +242,41 @@ async def upload_video(file: UploadFile = File(...)):
             f"Converted from {vcodec} to H.264 for browser playback"
             if converted and vcodec
             else None
+        ),
+    }
+
+
+@app.post("/api/videos/upload")
+async def upload_video(file: List[UploadFile] = File(...)):
+    uploads = [f for f in file if f and f.filename]
+    if not uploads:
+        raise HTTPException(400, "No filename")
+
+    results: List[Dict[str, Any]] = []
+    errors: List[Dict[str, str]] = []
+    for item in uploads:
+        try:
+            results.append(_ingest_uploaded_video(item))
+        except HTTPException as exc:
+            errors.append({"filename": item.filename or "", "error": str(exc.detail)})
+        except Exception as exc:
+            errors.append({"filename": item.filename or "", "error": str(exc)})
+
+    if not results:
+        raise HTTPException(400, errors[0]["error"] if errors else "Upload failed")
+    if len(results) == 1 and not errors:
+        return results[0]
+    return {
+        "ok": True,
+        "video": results[-1]["video"],
+        "videos": [r["video"] for r in results],
+        "uploaded": len(results),
+        "failed": len(errors),
+        "errors": errors,
+        "converted_to_h264": any(r.get("converted_to_h264") for r in results),
+        "message": (
+            f"Uploaded {len(results)} video{'s' if len(results) != 1 else ''}"
+            + (f", {len(errors)} failed" if errors else "")
         ),
     }
 
