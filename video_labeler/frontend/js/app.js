@@ -8,6 +8,7 @@
     counts: {},
     totalCount: 0,
     videos: [],
+    videoQuery: "",
     videoId: null,
     meta: null,
     segments: [],
@@ -152,14 +153,40 @@
     renderLabels();
   }
 
+  function filteredVideos() {
+    const q = (state.videoQuery || "").trim().toLowerCase();
+    if (!q) return state.videos;
+    return state.videos.filter((v) => {
+      const name = (v.filename || "").toLowerCase();
+      const id = (v.id || "").toLowerCase();
+      return name.includes(q) || id.includes(q);
+    });
+  }
+
   function renderVideoList() {
     const list = $("videoList");
+    const countEl = $("videoSearchCount");
     list.innerHTML = "";
+    const videos = filteredVideos();
+    const q = (state.videoQuery || "").trim();
+    if (countEl) {
+      if (q && state.videos.length) {
+        countEl.hidden = false;
+        countEl.textContent = `${videos.length} of ${state.videos.length}`;
+      } else {
+        countEl.hidden = true;
+        countEl.textContent = "";
+      }
+    }
     if (!state.videos.length) {
       list.innerHTML = '<li class="meta">No videos yet</li>';
       return;
     }
-    state.videos.forEach((v) => {
+    if (!videos.length) {
+      list.innerHTML = '<li class="meta">No videos match that search</li>';
+      return;
+    }
+    videos.forEach((v) => {
       const li = document.createElement("li");
       if (v.id === state.videoId) li.classList.add("active");
       li.innerHTML = `
@@ -419,6 +446,11 @@
   });
 
   $("btnRefresh").onclick = () => loadVideos().catch((e) => toast(e.message, "error"));
+
+  $("videoSearch").addEventListener("input", (e) => {
+    state.videoQuery = e.target.value;
+    renderVideoList();
+  });
 
   $("btnAddLabel").onclick = async () => {
     const input = $("newLabelInput");
