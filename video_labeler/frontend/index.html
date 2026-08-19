@@ -47,10 +47,11 @@
         <section class="panel">
           <div class="panel-head">
             <h2>Classes</h2>
+            <span class="count-total" id="classCountTotal">0 total</span>
           </div>
           <div class="label-chips" id="labelChips"></div>
           <div class="label-edit">
-            <input id="newLabelInput" type="text" placeholder="Add class (e.g. drinking)" />
+            <input id="newLabelInput" type="text" placeholder="Add activity (e.g. drinking)" />
             <button class="btn btn-small" id="btnAddLabel" type="button">Add</button>
           </div>
         </section>
@@ -69,7 +70,7 @@
         <div class="stage" id="stageEmpty">
           <div class="empty-state">
             <h2>Upload a video to start labeling</h2>
-            <p>Mark start/end frames for each action, optionally crop the person, then export and train.</p>
+            <p>Pick posture (sitting/standing) plus an optional activity, mark start/end, optionally crop the person, then export and train.</p>
           </div>
         </div>
 
@@ -91,8 +92,12 @@
 
           <div class="label-bar">
             <label class="field">
-              <span>Action</span>
-              <select id="labelSelect"></select>
+              <span>Posture</span>
+              <select id="postureSelect"></select>
+            </label>
+            <label class="field">
+              <span>Activity</span>
+              <select id="activitySelect"></select>
             </label>
             <button class="btn btn-ghost" id="btnMarkStart" type="button">Mark start</button>
             <button class="btn btn-ghost" id="btnMarkEnd" type="button">Mark end</button>
@@ -110,7 +115,8 @@
             <table class="seg-table">
               <thead>
                 <tr>
-                  <th>Label</th>
+                  <th>Posture</th>
+                  <th>Activity</th>
                   <th>Start</th>
                   <th>End</th>
                   <th>Crop</th>
@@ -185,7 +191,8 @@
               <thead>
                 <tr>
                   <th>Person</th>
-                  <th>Action</th>
+                  <th>Posture</th>
+                  <th>Activity</th>
                   <th>Score</th>
                   <th>Frames</th>
                 </tr>

@@ -3,6 +3,10 @@
 
   const state = {
     labels: [],
+    postures: ["sitting", "standing"],
+    activities: [],
+    counts: {},
+    totalCount: 0,
     videos: [],
     videoId: null,
     meta: null,
@@ -42,21 +46,110 @@
     return data;
   }
 
-  function renderLabels() {
-    const chips = $("labelChips");
-    const select = $("labelSelect");
-    chips.innerHTML = "";
+  function isPosture(name) {
+    return (state.postures || []).includes(name);
+  }
+
+  function isActivity(name) {
+    return (state.activities || []).includes(name);
+  }
+
+  function displayLabel(seg) {
+    const parts = [seg.posture, seg.activity].filter(Boolean);
+    if (parts.length) return parts.join(" + ");
+    return seg.label || "—";
+  }
+
+  function normalizeSeg(seg) {
+    const next = { ...seg };
+    if (next.posture || next.activity) {
+      next.label = displayLabel(next);
+      return next;
+    }
+    const legacy = next.label || "";
+    const parts = legacy
+      .split(/[+,]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    parts.forEach((part) => {
+      if (isPosture(part) && !next.posture) next.posture = part;
+      else if (isActivity(part) && !next.activity) next.activity = part;
+    });
+    if (!next.posture && !next.activity && legacy) {
+      if (isPosture(legacy)) next.posture = legacy;
+      else next.activity = legacy;
+    }
+    next.label = displayLabel(next);
+    return next;
+  }
+
+  function renderChip(label) {
+    const count = state.counts[label] || 0;
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.innerHTML = `<span class="chip-name">${label}</span><span class="chip-count">${count}</span>`;
+    return chip;
+  }
+
+  function fillSelect(select, values, extra) {
+    const selected = select.value;
     select.innerHTML = "";
-    state.labels.forEach((label, i) => {
-      const chip = document.createElement("span");
-      chip.className = "chip" + (i === 0 ? " active" : "");
-      chip.textContent = label;
-      chips.appendChild(chip);
+    (extra || []).forEach((item) => {
       const opt = document.createElement("option");
-      opt.value = label;
-      opt.textContent = label;
+      opt.value = item.value;
+      opt.textContent = item.label;
       select.appendChild(opt);
     });
+    values.forEach((name) => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = `${name} (${state.counts[name] || 0})`;
+      select.appendChild(opt);
+    });
+    if (selected && [...select.options].some((o) => o.value === selected)) {
+      select.value = selected;
+    }
+  }
+
+  function renderLabels() {
+    const chips = $("labelChips");
+    chips.innerHTML = "";
+    const groups = [
+      { title: "Posture", items: state.postures || [] },
+      { title: "Activity", items: state.activities || [] },
+    ];
+    groups.forEach((group) => {
+      if (!group.items.length) return;
+      const wrap = document.createElement("div");
+      wrap.innerHTML = `<span class="chip-group-title">${group.title}</span>`;
+      const row = document.createElement("div");
+      row.className = "chip-row";
+      group.items.forEach((label) => row.appendChild(renderChip(label)));
+      wrap.appendChild(row);
+      chips.appendChild(wrap);
+    });
+
+    const postureSel = $("postureSelect");
+    const activitySel = $("activitySelect");
+    if (postureSel) fillSelect(postureSel, state.postures || []);
+    if (activitySel) {
+      fillSelect(activitySel, state.activities || [], [{ value: "", label: "none" }]);
+    }
+    const totalEl = $("classCountTotal");
+    if (totalEl) {
+      const total = state.totalCount ?? Object.values(state.counts).reduce((a, b) => a + b, 0);
+      totalEl.textContent = `${total} annotated`;
+    }
+  }
+
+  async function loadLabelCounts() {
+    const data = await api("/api/labels");
+    state.labels = data.labels || [];
+    state.postures = data.postures || ["sitting", "standing"];
+    state.activities = data.activities || state.labels.filter((l) => !state.postures.includes(l));
+    state.counts = data.counts || {};
+    state.totalCount = data.total || 0;
+    renderLabels();
   }
 
   function renderVideoList() {
@@ -101,6 +194,7 @@
         $("stageEmpty").classList.remove("hidden");
       }
       await loadVideos();
+      await loadLabelCounts();
       toast("Video deleted", "ok");
     } catch (err) {
       toast(err.message || "Delete failed", "error");
@@ -113,7 +207,8 @@
     state.segments.forEach((seg, idx) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td>${seg.label}</td>
+        <td>${seg.posture || "—"}</td>
+        <td>${seg.activity || "—"}</td>
         <td>${seg.start_frame}</td>
         <td>${seg.end_frame}</td>
         <td>${seg.bbox ? "yes" : "—"}</td>
@@ -213,15 +308,13 @@
       const width = Math.max(0.4, ((seg.end_frame - seg.start_frame + 1) / total) * 100);
       span.style.left = `${left}%`;
       span.style.width = `${width}%`;
-      span.title = `${seg.label} ${seg.start_frame}-${seg.end_frame}`;
+      span.title = `${displayLabel(seg)} ${seg.start_frame}-${seg.end_frame}`;
       el.appendChild(span);
     });
   }
 
   async function loadLabels() {
-    const data = await api("/api/labels");
-    state.labels = data.labels || [];
-    renderLabels();
+    await loadLabelCounts();
   }
 
   async function loadVideos() {
@@ -242,7 +335,7 @@
 
     const meta = await api(`/api/videos/${id}/meta`);
     state.meta = meta;
-    state.segments = (meta.segments || []).map((s) => ({ ...s }));
+    state.segments = (meta.segments || []).map((s) => normalizeSeg(s));
     videoEl.onerror = async () => {
       toast("Video codec not supported in browser — converting to H.264…", "error");
       try {
@@ -283,6 +376,7 @@
       body: JSON.stringify(payload),
     });
     await loadVideos();
+    await loadLabelCounts();
     toast("Annotations saved", "ok");
   }
 
@@ -316,17 +410,26 @@
       toast("Label already exists", "error");
       return;
     }
+    if (isPosture(name)) {
+      toast("sitting and standing are postures, not activities", "error");
+      return;
+    }
     const labels = [...state.labels, name];
+    const activities = [...(state.activities || []), name];
     try {
       const data = await api("/api/labels", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ labels }),
+        body: JSON.stringify({
+          labels,
+          postures: state.postures,
+          activities,
+        }),
       });
       state.labels = data.labels;
-      renderLabels();
+      await loadLabelCounts();
       input.value = "";
-      toast(`Added class ${name}`);
+      toast(`Added activity ${name}`);
     } catch (err) {
       toast(err.message, "error");
     }
@@ -378,10 +481,17 @@
     let start = state.pendingStart;
     let end = state.pendingEnd;
     if (end < start) [start, end] = [end, start];
-    const label = $("labelSelect").value;
+    const posture = $("postureSelect").value;
+    const activity = $("activitySelect").value;
+    if (!posture) {
+      toast("Pick a posture (sitting or standing)", "error");
+      return;
+    }
     const seg = {
       id: Math.random().toString(36).slice(2, 10),
-      label,
+      posture,
+      activity,
+      label: [posture, activity].filter(Boolean).join(" + "),
       start_frame: start,
       end_frame: end,
       bbox: state.cropDraft
@@ -394,7 +504,7 @@
     state.pendingEnd = null;
     updatePending();
     renderSegments();
-    toast(`Saved ${label} ${start}–${end}`);
+    toast(`Saved ${seg.label} ${start}–${end}`);
   };
 
   $("btnSaveAll").onclick = () => saveAnnotations().catch((e) => toast(e.message, "error"));
@@ -636,14 +746,15 @@
     body.innerHTML = "";
     const persons = job.persons || [];
     if (!persons.length) {
-      body.innerHTML = '<tr><td colspan="4">No persons detected</td></tr>';
+      body.innerHTML = '<tr><td colspan="5">No persons detected</td></tr>';
       return;
     }
     persons.forEach((p) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>P${p.id}</td>
-        <td>${p.label}</td>
+        <td>${p.posture || "—"}</td>
+        <td>${p.activity || "—"}</td>
         <td>${(p.score * 100).toFixed(1)}%</td>
         <td>${p.frames}</td>`;
       body.appendChild(tr);

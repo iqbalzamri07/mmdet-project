@@ -270,16 +270,49 @@ html, body {
 
 .label-chips {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 10px;
   margin-bottom: 10px;
 }
+.chip-group-title {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   background: #eef3f6;
   border-radius: 999px;
-  padding: 4px 10px;
+  padding: 4px 6px 4px 10px;
   font-size: 0.8rem;
   font-weight: 500;
+}
+.chip-count {
+  min-width: 1.4em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--teal-deep);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+.count-total {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .chip.active {
   background: var(--coral-soft);

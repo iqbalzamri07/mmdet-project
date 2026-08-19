@@ -18,7 +18,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config
-from .export import export_dataset, load_annotation, save_annotation, sync_train_config_labels
+from .export import (
+    count_annotations,
+    export_dataset,
+    load_annotation,
+    save_annotation,
+    sync_train_config_labels,
+)
 from .media import is_browser_playable, probe_codecs
 from .infer import (
     TEST_INPUT_DIR,
@@ -44,7 +50,9 @@ app.add_middleware(
 
 class Segment(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
-    label: str
+    label: Optional[str] = ""
+    posture: Optional[str] = ""
+    activity: Optional[str] = ""
     start_frame: int
     end_frame: int
     bbox: Optional[List[float]] = None  # [x1,y1,x2,y2] pixels or normalized
@@ -103,30 +111,53 @@ def health():
 
 @app.get("/api/labels")
 def get_labels():
-    return {"labels": config.ACTION_LABELS}
+    stats = count_annotations()
+    return {
+        "labels": config.ACTION_LABELS,
+        "postures": config.POSTURE_LABELS,
+        "activities": config.ACTIVITY_LABELS,
+        "counts": stats["counts"],
+        "total": stats["total"],
+        "videos_labeled": stats["videos_labeled"],
+    }
 
 
 @app.put("/api/labels")
-def set_labels(payload: Dict[str, List[str]]):
+def set_labels(payload: Dict[str, Any]):
     labels = payload.get("labels") or []
     labels = [l.strip().replace(" ", "_") for l in labels if l.strip()]
-    if not labels:
+    postures = payload.get("postures")
+    activities = payload.get("activities")
+    if postures is not None:
+        postures = [l.strip().replace(" ", "_") for l in postures if str(l).strip()]
+    if activities is not None:
+        activities = [l.strip().replace(" ", "_") for l in activities if str(l).strip()]
+
+    if not labels and not activities and not postures:
         raise HTTPException(400, "labels cannot be empty")
-    # Persist into config module for this process
-    config.ACTION_LABELS = labels
-    labels_file = config.DATA_DIR / "labels.json"
-    with open(labels_file, "w", encoding="utf-8") as f:
-        json.dump({"labels": labels}, f, indent=2)
-    return {"labels": labels}
+
+    if postures is None and activities is None:
+        # Flat list from older clients: keep known postures, rest are activities.
+        postures = [l for l in labels if l in config.POSTURE_LABELS] or list(config.POSTURE_LABELS)
+        activities = [l for l in labels if l not in postures]
+    elif activities is None:
+        activities = [l for l in labels if l not in (postures or [])]
+    elif postures is None:
+        postures = list(config.POSTURE_LABELS)
+
+    extras = [l for l in labels if l not in postures and l not in activities]
+    config.POSTURE_LABELS = postures
+    config.ACTIVITY_LABELS = list(dict.fromkeys(activities + extras))
+    config.persist_label_taxonomy()
+    return {
+        "labels": config.ACTION_LABELS,
+        "postures": config.POSTURE_LABELS,
+        "activities": config.ACTIVITY_LABELS,
+    }
 
 
 def _load_persisted_labels():
-    labels_file = config.DATA_DIR / "labels.json"
-    if labels_file.exists():
-        with open(labels_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if data.get("labels"):
-            config.ACTION_LABELS = data["labels"]
+    config.load_label_taxonomy()
 
 
 _load_persisted_labels()
@@ -308,10 +339,14 @@ def put_annotation(video_id: str, payload: AnnotationPayload):
     if not matches:
         raise HTTPException(404, "Video not found")
     for seg in payload.segments:
-        if seg.label not in config.ACTION_LABELS:
-            raise HTTPException(400, f"Unknown label: {seg.label}")
+        names = config.segment_class_names(seg.model_dump())
+        if not names:
+            raise HTTPException(400, "Each segment needs a posture and/or activity")
         if seg.end_frame < seg.start_frame:
             raise HTTPException(400, "end_frame must be >= start_frame")
+        # Keep a display label for older tools
+        if not seg.label:
+            seg.label = " + ".join(names)
     data = payload.model_dump()
     data["video_id"] = video_id
     path = save_annotation(video_id, data)

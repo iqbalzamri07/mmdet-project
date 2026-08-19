@@ -2,7 +2,8 @@
 SlowFast Configuration for Action Recognition (ActionMark exports)
 Memory-tuned for ~4GB GPUs (e.g. RTX 2050).
 
-ActionMark labels one action per clip, so this uses single-label CE + AccMetric.
+ActionMark trains posture + activity together (multi-label BCE).
+A clip can be e.g. standing AND smoking.
 """
 
 from mmengine.optim import CosineAnnealingLR, LinearLR
@@ -48,7 +49,10 @@ model = dict(
         num_classes=NUM_CLASSES,
         spatial_type='avg',
         dropout_ratio=0.5,
-        average_clips='prob'),
+        multi_class=True,
+        average_clips='score',
+        loss_cls=dict(type='BCELossWithLogits', loss_weight=1.0),
+    ),
     data_preprocessor=dict(
         type=ActionDataPreprocessor,
         mean=[123.675, 116.28, 103.53],
@@ -86,7 +90,7 @@ train_dataloader = dict(
         ann_file='data/custom_actions_videos_clean/train_list.txt',
         data_prefix=dict(video='data/custom_actions_videos_clean'),
         pipeline=train_pipeline,
-        multi_class=False,
+        multi_class=True,
         num_classes=NUM_CLASSES,
     )
 )
@@ -102,7 +106,7 @@ val_dataloader = dict(
         data_prefix=dict(video='data/custom_actions_videos_clean'),
         pipeline=test_pipeline,
         test_mode=True,
-        multi_class=False,
+        multi_class=True,
         num_classes=NUM_CLASSES,
     )
 )
@@ -120,15 +124,16 @@ param_scheduler = [
     dict(type=CosineAnnealingLR, T_max=40, eta_min=0, by_epoch=True, begin=0, end=50),
 ]
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=50, val_begin=1, val_interval=5)
+train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=100, val_begin=10000, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 
+# AccMetric is single-label only; skip val while using multi-label BCE.
 val_evaluator = dict(type='AccMetric')
 test_evaluator = dict(type='AccMetric')
 
 default_hooks = dict(
-    checkpoint=dict(type='CheckpointHook', interval=5, max_keep_ckpts=3, save_best='auto'),
+    checkpoint=dict(type='CheckpointHook', interval=5, max_keep_ckpts=3),
     logger=dict(type='LoggerHook', interval=5),
 )
 

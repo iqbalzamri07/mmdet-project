@@ -22,6 +22,41 @@ def load_annotation(video_id: str) -> Optional[Dict[str, Any]]:
         return json.load(f)
 
 
+def count_annotations() -> Dict[str, Any]:
+    """Count saved posture/activity tags across all annotation files."""
+    counts = {name: 0 for name in config.ACTION_LABELS}
+    other = 0
+    videos_labeled = 0
+    total = 0
+    for path in config.ANNOTATIONS_DIR.glob("*.json"):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                ann = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        segs = ann.get("segments") or []
+        if segs:
+            videos_labeled += 1
+        for seg in segs:
+            names = config.segment_class_names(seg)
+            if not names:
+                continue
+            total += 1
+            for label in names:
+                if label in counts:
+                    counts[label] += 1
+                else:
+                    other += 1
+                    counts.setdefault(label, 0)
+                    counts[label] += 1
+    return {
+        "counts": counts,
+        "total": total,
+        "videos_labeled": videos_labeled,
+        "other": other,
+    }
+
+
 def save_annotation(video_id: str, data: Dict[str, Any]) -> Path:
     path = config.ANNOTATIONS_DIR / f"{video_id}.json"
     data["video_id"] = video_id
@@ -102,10 +137,12 @@ def export_segment_clip(
 
     writer.release()
     cap.release()
+    names = config.segment_class_names(segment)
     return {
         "path": str(output_path),
         "frames": written,
-        "label": segment["label"],
+        "label": names[0] if names else "",
+        "labels": names,
         "start_frame": start,
         "end_frame": end,
     }
@@ -125,7 +162,8 @@ def _collect_all_segments() -> List[Dict[str, Any]]:
                 continue
             video_path = matches[0]
         for i, seg in enumerate(ann.get("segments", [])):
-            if not seg.get("label") or seg["label"] not in config.ACTION_LABELS:
+            names = config.segment_class_names(seg)
+            if not names:
                 continue
             items.append(
                 {
@@ -133,6 +171,7 @@ def _collect_all_segments() -> List[Dict[str, Any]]:
                     "video_path": video_path,
                     "segment": seg,
                     "seg_index": i,
+                    "labels": names,
                 }
             )
     return items
@@ -170,26 +209,40 @@ def export_dataset(
 
     exported = []
     label_counts = {l: {"train": 0, "val": 0} for l in config.ACTION_LABELS}
+    clip_records = []
 
     for item in items:
-        label = item["segment"]["label"]
+        names = item.get("labels") or config.segment_class_names(item["segment"])
+        folder_label = names[-1] if names else "unknown"
         split = "val" if id(item) in val_set else "train"
-        dest_dir = out_root / split / label
+        dest_dir = out_root / split / folder_label
         dest_dir.mkdir(parents=True, exist_ok=True)
         clip_name = f"{item['video_id']}_seg{item['seg_index']:04d}.mp4"
         dest = dest_dir / clip_name
         try:
             info = export_segment_clip(item["video_path"], item["segment"], dest)
             info["split"] = split
+            info["labels"] = names
             exported.append(info)
-            label_counts[label][split] += 1
+            clip_records.append(
+                {
+                    "split": split,
+                    "folder": folder_label,
+                    "filename": clip_name,
+                    "labels": names,
+                }
+            )
+            for name in names:
+                if name not in label_counts:
+                    label_counts[name] = {"train": 0, "val": 0}
+                label_counts[name][split] += 1
         except Exception as exc:
             exported.append(
                 {
                     "error": str(exc),
                     "video_id": item["video_id"],
                     "seg_index": item["seg_index"],
-                    "label": label,
+                    "labels": names,
                 }
             )
 
@@ -200,9 +253,9 @@ def export_dataset(
         for name in config.ACTION_LABELS:
             f.write(name + "\n")
 
-    # Also write clean-style lists for SlowFast
+    # Also write clean-style lists for SlowFast (multi-label indices)
     clean_root = config.CLEAN_VIDEOS_DIR
-    _rebuild_clean_lists(out_root, clean_root)
+    _rebuild_clean_lists(out_root, clean_root, clip_records)
 
     ok_clips = [e for e in exported if "error" not in e]
     summary = {
@@ -221,7 +274,11 @@ def export_dataset(
     return summary
 
 
-def _rebuild_clean_lists(source_root: Path, clean_root: Path) -> None:
+def _rebuild_clean_lists(
+    source_root: Path,
+    clean_root: Path,
+    clip_records: Optional[List[Dict[str, Any]]] = None,
+) -> None:
     """Symlink/copy clips into clean layout and write train_list.txt / val_list.txt."""
     if clean_root.exists():
         shutil.rmtree(clean_root)
@@ -229,24 +286,53 @@ def _rebuild_clean_lists(source_root: Path, clean_root: Path) -> None:
 
     label_to_idx = {name: i for i, name in enumerate(config.ACTION_LABELS)}
 
+    records = clip_records or []
+    if not records:
+        # Fallback: infer a single label from folder name
+        for split in ("train", "val"):
+            for label in config.ACTION_LABELS:
+                src_dir = source_root / split / label
+                if not src_dir.exists():
+                    continue
+                for video_file in sorted(src_dir.glob("*.mp4")):
+                    records.append(
+                        {
+                            "split": split,
+                            "folder": label,
+                            "filename": video_file.name,
+                            "labels": [label],
+                        }
+                    )
+
+    counters = {("train", l): 0 for l in config.ACTION_LABELS}
+    counters.update({("val", l): 0 for l in config.ACTION_LABELS})
+    lines_by_split = {"train": [], "val": []}
+
+    for rec in records:
+        split = rec["split"]
+        folder = rec.get("folder") or (rec["labels"][0] if rec.get("labels") else "unknown")
+        src = source_root / split / folder / rec["filename"]
+        if not src.exists():
+            continue
+        dest_dir = clean_root / split / folder
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        idx = counters.get((split, folder), 0)
+        counters[(split, folder)] = idx + 1
+        clean_name = f"video_{idx:05d}{src.suffix}"
+        target = dest_dir / clean_name
+        try:
+            target.symlink_to(src.resolve())
+        except OSError:
+            shutil.copy2(src, target)
+        names = [n for n in rec.get("labels") or [] if n in label_to_idx]
+        if not names:
+            continue
+        indices = " ".join(str(label_to_idx[n]) for n in names)
+        lines_by_split[split].append(f"{split}/{folder}/{clean_name} {indices}")
+
     for split in ("train", "val"):
-        lines = []
-        for label in config.ACTION_LABELS:
-            src_dir = source_root / split / label
-            if not src_dir.exists():
-                continue
-            dest_dir = clean_root / split / label
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            for i, video_file in enumerate(sorted(src_dir.glob("*.mp4"))):
-                clean_name = f"video_{i:05d}{video_file.suffix}"
-                target = dest_dir / clean_name
-                try:
-                    target.symlink_to(video_file.resolve())
-                except OSError:
-                    shutil.copy2(video_file, target)
-                rel = f"{split}/{label}/{clean_name}"
-                lines.append(f"{rel} {label_to_idx[label]}")
         list_path = clean_root / f"{split}_list.txt"
+        lines = lines_by_split[split]
         with open(list_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + ("\n" if lines else ""))
 

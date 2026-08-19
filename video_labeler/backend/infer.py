@@ -32,10 +32,12 @@ CLIP_LEN = 16
 MIN_FRAMES = 5
 DETECT_EVERY = 2  # run detector every N frames (speed)
 WINDOW_STRIDE = 8
-DET_THRESHOLD = 0.6
+DET_THRESHOLD = 0.7
 TARGET_SIZE = (160, 160)
-# Only accept action predictions at or above this confidence
+# Activity needs high confidence; posture can be a bit lower
 CONFIDENCE_THRESHOLD = 0.70
+POSTURE_THRESHOLD = 0.50
+ACTIVITY_THRESHOLD = 0.60
 
 for d in (TEST_INPUT_DIR, TEST_OUTPUT_DIR, TEST_JOBS_DIR):
     d.mkdir(parents=True, exist_ok=True)
@@ -135,14 +137,107 @@ class _PersonTracker:
                 }
 
 
-def _load_labels_from_config() -> List[str]:
+def _load_label_taxonomy() -> Tuple[List[str], List[str], List[str]]:
     labels_file = config.DATA_DIR / "labels.json"
+    labels = list(config.ACTION_LABELS)
+    postures = list(config.POSTURE_LABELS)
+    activities = list(config.ACTIVITY_LABELS)
     if labels_file.exists():
-        with open(labels_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if data.get("labels"):
-            return list(data["labels"])
-    return list(config.ACTION_LABELS)
+        try:
+            with open(labels_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if data.get("labels"):
+                labels = list(data["labels"])
+            if data.get("postures"):
+                postures = list(data["postures"])
+            if data.get("activities"):
+                activities = list(data["activities"])
+        except (OSError, json.JSONDecodeError):
+            pass
+    return labels, postures, activities
+
+
+def _cfg_is_multilabel(cfg) -> bool:
+    try:
+        head = cfg.model.get("cls_head", {}) if hasattr(cfg, "model") else {}
+        loss = head.get("loss_cls") or {}
+        if isinstance(loss, dict) and "BCE" in str(loss.get("type", "")):
+            return True
+        dataset = cfg.train_dataloader.get("dataset", {})
+        return bool(dataset.get("multi_class"))
+    except Exception:
+        return False
+
+
+def _softmax(x: np.ndarray) -> np.ndarray:
+    z = x - np.max(x)
+    e = np.exp(z)
+    return e / (e.sum() + 1e-8)
+
+
+def _sigmoid(x: np.ndarray) -> np.ndarray:
+    x = np.clip(x, -20, 20)
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def _best_in_group(
+    labels: List[str],
+    probs: np.ndarray,
+    group: List[str],
+    threshold: float,
+) -> Tuple[str, float]:
+    idxs = [i for i, name in enumerate(labels) if name in group and i < len(probs)]
+    if not idxs:
+        return "", 0.0
+    best = max(idxs, key=lambda i: float(probs[i]))
+    score = float(probs[best])
+    if score < threshold:
+        return "", score
+    return labels[best], score
+
+
+def _compose_prediction(posture: str, p_score: float, activity: str, a_score: float) -> Dict[str, Any]:
+    # Walking already implies locomotion; don't also print standing.
+    show_posture = posture if activity != "walking" else ""
+    parts = [p for p in (show_posture, activity) if p]
+    display = " + ".join(parts) if parts else "unknown"
+    if activity:
+        score = a_score if a_score > 0 else p_score
+    else:
+        score = p_score
+    return {
+        "label": display,
+        "posture": show_posture,
+        "posture_score": round(p_score, 4),
+        "activity": activity,
+        "activity_score": round(a_score, 4),
+        "score": round(float(score), 4),
+    }
+
+
+def _decode_posture_activity(
+    scores: np.ndarray,
+    labels: List[str],
+    postures: List[str],
+    activities: List[str],
+    multi_label: bool,
+) -> Dict[str, Any]:
+    n = min(len(scores), len(labels))
+    raw = np.asarray(scores[:n], dtype=np.float32)
+    looks_softmax = raw.min() >= 0 and abs(float(raw.sum()) - 1.0) < 0.2
+    looks_logits = raw.min() < 0 or raw.max() > 1.5
+    if looks_softmax:
+        probs = raw / (raw.sum() + 1e-8)
+        p_thr, a_thr = 0.15, ACTIVITY_THRESHOLD
+    elif multi_label or not looks_logits:
+        probs = _sigmoid(raw) if looks_logits else raw
+        p_thr, a_thr = POSTURE_THRESHOLD, ACTIVITY_THRESHOLD
+    else:
+        probs = _softmax(raw)
+        p_thr, a_thr = 0.15, ACTIVITY_THRESHOLD
+    posture, p_score = _best_in_group(labels[:n], probs, postures, p_thr)
+    activity, a_score = _best_in_group(labels[:n], probs, activities, a_thr)
+    return _compose_prediction(posture, p_score, activity, a_score)
 
 
 def _detect_persons(det_model, frame) -> List[Tuple[int, int, int, int]]:
@@ -163,12 +258,20 @@ def _detect_persons(det_model, frame) -> List[Tuple[int, int, int, int]]:
     return persons
 
 
-def _classify_crops(action_model, crops: List[np.ndarray], labels: List[str]) -> Tuple[str, float]:
+def _classify_crops(
+    action_model,
+    crops: List[np.ndarray],
+    labels: List[str],
+    postures: List[str],
+    activities: List[str],
+    multi_label: bool,
+) -> Dict[str, Any]:
     from mmaction.apis import inference_recognizer
 
+    empty = _compose_prediction("", 0.0, "", 0.0)
     valid = [c for c in crops if c is not None and c.size > 0 and c.shape[0] > 1 and c.shape[1] > 1]
     if len(valid) < MIN_FRAMES:
-        return "unknown", 0.0
+        return empty
 
     resized = [cv2.resize(c, TARGET_SIZE) for c in valid[:CLIP_LEN]]
     tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
@@ -182,18 +285,7 @@ def _classify_crops(action_model, crops: List[np.ndarray], labels: List[str]) ->
     try:
         result = inference_recognizer(action_model, tmp_path)
         scores = result.pred_score.detach().float().cpu().numpy().reshape(-1)
-        # Softmax if not already probabilities
-        if scores.min() < 0 or scores.max() > 1.5:
-            exp = np.exp(scores - scores.max())
-            probs = exp / exp.sum()
-        else:
-            probs = scores / (scores.sum() + 1e-8)
-        idx = int(np.argmax(probs[: len(labels)]))
-        conf = float(probs[idx])
-        # Reject low-confidence predictions — not a reliable pose/action
-        if conf < CONFIDENCE_THRESHOLD:
-            return "unknown", conf
-        return labels[idx], conf
+        return _decode_posture_activity(scores, labels, postures, activities, multi_label)
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
@@ -242,7 +334,7 @@ def run_inference(
 
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:64,expandable_segments:True")
 
-    labels = _load_labels_from_config()
+    labels, postures, activities = _load_label_taxonomy()
     job_id = job_id or datetime.utcnow().strftime("infer_%Y%m%d_%H%M%S")
     log_lines: List[str] = []
 
@@ -265,7 +357,9 @@ def run_inference(
     log(f"[infer] video={video_path.name}")
     log(f"[infer] checkpoint={checkpoint_path.name}")
     log(f"[infer] labels={labels}")
-    log(f"[infer] confidence_threshold={CONFIDENCE_THRESHOLD:.0%}")
+    log(f"[infer] postures={postures}")
+    log(f"[infer] activities={activities}")
+    log(f"[infer] activity_threshold={ACTIVITY_THRESHOLD:.0%} posture_threshold={POSTURE_THRESHOLD:.0%}")
 
     # Load models
     device_action = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -275,7 +369,8 @@ def run_inference(
         cfg.model["cls_head"]["num_classes"] = len(labels)
     action_model = init_recognizer(cfg, str(checkpoint_path), device=device_action)
     action_model.eval()
-    log(f"[infer] SlowFast on {device_action}")
+    multi_label = _cfg_is_multilabel(cfg)
+    log(f"[infer] SlowFast on {device_action} (multi_label={multi_label})")
 
     init_default_scope("mmdet")
     det_model = init_detector(str(DET_CONFIG), str(DET_CHECKPOINT), device="cpu")
@@ -311,19 +406,19 @@ def run_inference(
             log(f"[infer] detect {i + 1}/{len(frames)}")
 
     # Build per-track crop sequences and classify with sliding windows
-    track_frame_labels: Dict[int, Dict[int, Tuple[str, float]]] = {}
+    track_frame_labels: Dict[int, Dict[int, Dict[str, Any]]] = {}
     summary: Dict[int, Dict[str, Any]] = {}
 
     for tid, td in tracker.tracks.items():
         seq = td["frames"]
         if len(seq) < MIN_FRAMES:
             continue
-        frame_labels: Dict[int, Tuple[str, float]] = {}
-        # Sliding windows along the track
+        frame_labels: Dict[int, Dict[str, Any]] = {}
         starts = list(range(0, max(1, len(seq) - CLIP_LEN + 1), WINDOW_STRIDE))
         if not starts:
             starts = [0]
-        votes: Dict[str, float] = {}
+        posture_votes: Dict[str, float] = {}
+        activity_votes: Dict[str, float] = {}
         for s in starts:
             window = seq[s : s + CLIP_LEN]
             crops = []
@@ -331,29 +426,34 @@ def run_inference(
                 x1, y1, x2, y2 = box
                 crop = frames[fidx][max(0, y1) : y2, max(0, x1) : x2]
                 crops.append(crop)
-            label, conf = _classify_crops(action_model, crops, labels)
+            pred = _classify_crops(
+                action_model, crops, labels, postures, activities, multi_label
+            )
             for fidx, _ in window:
-                frame_labels[fidx] = (label, conf)
-            # Only count confident action labels toward the person summary
-            if label != "unknown" and conf >= CONFIDENCE_THRESHOLD:
-                votes[label] = votes.get(label, 0.0) + conf
+                frame_labels[fidx] = pred
+            if pred.get("posture"):
+                posture_votes[pred["posture"]] = posture_votes.get(pred["posture"], 0.0) + pred.get(
+                    "posture_score", 0.0
+                )
+            if pred.get("activity"):
+                activity_votes[pred["activity"]] = activity_votes.get(pred["activity"], 0.0) + pred.get(
+                    "activity_score", 0.0
+                )
         track_frame_labels[tid] = frame_labels
-        if votes:
-            best = max(votes.items(), key=lambda x: x[1])
-            avg_score = float(best[1] / max(1, len(starts)))
-            # Final person label must still clear the threshold on average
-            if avg_score >= CONFIDENCE_THRESHOLD:
-                summary_label, summary_score = best[0], avg_score
-            else:
-                summary_label, summary_score = "unknown", avg_score
-        else:
-            summary_label, summary_score = "unknown", 0.0
+        best_posture, p_score = ("", 0.0)
+        best_activity, a_score = ("", 0.0)
+        if posture_votes:
+            best_posture = max(posture_votes.items(), key=lambda x: x[1])[0]
+            p_score = posture_votes[best_posture] / max(1, len(starts))
+        if activity_votes:
+            best_activity = max(activity_votes.items(), key=lambda x: x[1])[0]
+            a_score = activity_votes[best_activity] / max(1, len(starts))
+        composed = _compose_prediction(best_posture, p_score, best_activity, a_score)
         summary[tid] = {
-            "label": summary_label,
-            "score": round(summary_score, 4),
+            **composed,
             "frames": len(seq),
         }
-        log(f"[infer] person {tid}: {summary_label} ({summary_score:.2f})")
+        log(f"[infer] person {tid}: {composed['label']} ({composed['score']:.2f})")
 
     # Annotate
     raw_out = TEST_OUTPUT_DIR / f"{job_id}_raw.mp4"
@@ -389,27 +489,24 @@ def run_inference(
             cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
 
             text = "person"
+            pred = None
             if tid is not None and tid in track_frame_labels:
                 fl = track_frame_labels[tid]
-                # nearest labeled frame
                 if i in fl:
-                    lab, conf = fl[i]
+                    pred = fl[i]
                 else:
                     nearby = [k for k in fl if abs(k - i) <= WINDOW_STRIDE]
                     if nearby:
                         k = min(nearby, key=lambda z: abs(z - i))
-                        lab, conf = fl[k]
+                        pred = fl[k]
                     elif tid in summary:
-                        lab, conf = summary[tid]["label"], summary[tid]["score"]
-                    else:
-                        lab, conf = "unknown", 0.0
-                if lab == "unknown" or conf < CONFIDENCE_THRESHOLD:
-                    text = f"P{tid}: unknown"
-                else:
-                    text = f"P{tid}: {lab} {conf * 100:.0f}%"
+                        pred = summary[tid]
             elif tid is not None and tid in summary:
-                lab, conf = summary[tid]["label"], summary[tid]["score"]
-                if lab == "unknown" or conf < CONFIDENCE_THRESHOLD:
+                pred = summary[tid]
+            if pred:
+                lab = pred.get("label") or "unknown"
+                conf = float(pred.get("score") or 0.0)
+                if lab == "unknown":
                     text = f"P{tid}: unknown"
                 else:
                     text = f"P{tid}: {lab} {conf * 100:.0f}%"
@@ -448,7 +545,16 @@ def run_inference(
         "checkpoint": checkpoint_path.name,
         "labels": labels,
         "persons": [
-            {"id": tid, "label": info["label"], "score": info["score"], "frames": info["frames"]}
+            {
+                "id": tid,
+                "label": info.get("label"),
+                "posture": info.get("posture") or "",
+                "activity": info.get("activity") or "",
+                "score": info.get("score", 0),
+                "posture_score": info.get("posture_score", 0),
+                "activity_score": info.get("activity_score", 0),
+                "frames": info.get("frames"),
+            }
             for tid, info in summary.items()
         ],
         "num_frames": len(frames),
