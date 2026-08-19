@@ -39,7 +39,10 @@
         <section class="panel">
           <div class="panel-head">
             <h2>Library</h2>
-            <button class="linkish" id="btnRefresh" type="button">Refresh</button>
+            <div class="panel-head-actions">
+              <span class="count-total" id="libraryCount">0 videos</span>
+              <button class="linkish" id="btnRefresh" type="button">Refresh</button>
+            </div>
           </div>
           <input
             id="videoSearch"
@@ -48,7 +51,6 @@
             placeholder="Search videos…"
             autocomplete="off"
           />
-          <p class="hint video-search-count" id="videoSearchCount" hidden></p>
           <ul class="video-list" id="videoList"></ul>
         </section>
 

@@ -209,6 +209,12 @@ html, body {
   cursor: pointer;
 }
 
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .video-search {
   width: 100%;
   box-sizing: border-box;
@@ -222,10 +228,6 @@ html, body {
 .video-search:focus {
   outline: none;
   border-color: var(--teal);
-}
-.video-search-count {
-  margin: -2px 0 8px;
-  font-size: 0.75rem;
 }
 
 .video-list {

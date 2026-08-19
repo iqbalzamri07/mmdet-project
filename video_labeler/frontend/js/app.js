@@ -165,17 +165,16 @@
 
   function renderVideoList() {
     const list = $("videoList");
-    const countEl = $("videoSearchCount");
+    const countEl = $("libraryCount");
     list.innerHTML = "";
     const videos = filteredVideos();
     const q = (state.videoQuery || "").trim();
+    const total = state.videos.length;
     if (countEl) {
-      if (q && state.videos.length) {
-        countEl.hidden = false;
-        countEl.textContent = `${videos.length} of ${state.videos.length}`;
+      if (q) {
+        countEl.textContent = `${videos.length} of ${total} videos`;
       } else {
-        countEl.hidden = true;
-        countEl.textContent = "";
+        countEl.textContent = `${total} video${total === 1 ? "" : "s"}`;
       }
     }
     if (!state.videos.length) {
