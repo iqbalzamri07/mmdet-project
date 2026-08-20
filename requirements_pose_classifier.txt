@@ -1,8 +1,0 @@
-# Additional dependencies for Pose Classification Training System
-# Core dependencies (already in main requirements.txt):
-# torch, torchvision, numpy, opencv-python, matplotlib
-
-# Additional requirements:
-scikit-learn>=1.3.0
-seaborn>=0.12.0
-tqdm>=4.65.0

@@ -1,8 +1,8 @@
-# mmdet-project
+# ActionMark
 
-Custom action recognition project (OpenMMLab + ActionMark UI).
+Label videos, train SlowFast, and test posture + activity recognition with person boxes.
 
-## Install (base environment)
+## Install
 
 ```bash
 cd /home/newadmin/mmdet-project
@@ -17,47 +17,25 @@ pip install -r requirements.txt
 pip install -r video_labeler/requirements.txt
 ```
 
-Or with `pyproject.toml` (after installing PyTorch as above):
+## Run
 
 ```bash
-pip install .
-```
-
----
-
-## How to run ActionMark (label · train · test)
-
-ActionMark is the web app for labeling videos, training SlowFast, and testing with boxes + action labels.
-
-```bash
-cd /home/newadmin/mmdet-project
-chmod +x run_labeler.sh
 ./run_labeler.sh
 ```
 
-Then open **http://127.0.0.1:8765**
+Open **http://127.0.0.1:8765**
 
-Manual start:
+Full docs: [video_labeler/README.md](video_labeler/README.md)
 
-```bash
-cd /home/newadmin/mmdet-project
-source venv/bin/activate
-export PYTHONPATH=/home/newadmin/mmdet-project
-python -m uvicorn video_labeler.backend.app:app --host 0.0.0.0 --port 8765 --reload
-```
+## Repository layout
 
-Full ActionMark docs: [video_labeler/README.md](video_labeler/README.md)
-
----
-
-## Other entry points
-
-| Script / path | Purpose |
-|---------------|---------|
-| `./run_labeler.sh` | ActionMark web UI |
-| `configs/slowfast_multilabel.py` | SlowFast train config |
-| `mmaction2/tools/train.py` | Train SlowFast from CLI |
-| `slowfast_memory_optimized.py` | Legacy CLI inference |
-| `mmlab-script/mmaction2.py` | Skeleton (ST-GCN) pipeline |
-
-Trained weights are saved under `work_dirs/slowfast_multilabel/`.
+| Path | Purpose |
+|------|---------|
+| `video_labeler/` | Web app (label · export · train · test) |
+| `configs/slowfast_multilabel.py` | SlowFast training config |
+| `mmaction2/` | MMAction2 (SlowFast train/infer) |
+| `mmdetection/` | MMDetection (Faster R-CNN person detector) |
+| `checkpoints/` | Pretrained Faster R-CNN + SlowFast weights |
+| `data/actionmark_dataset/` | Exported training clips |
+| `data/custom_actions_videos_clean/` | Train/val lists for SlowFast |
+| `work_dirs/slowfast_multilabel/` | Your trained `.pth` checkpoints |
