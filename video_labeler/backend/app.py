@@ -86,6 +86,7 @@ class ExportRequest(BaseModel):
 class TrainRequest(BaseModel):
     export_first: bool = True
     sync_labels: bool = True
+    epochs: int = Field(default=100, ge=1, le=300)
 
 
 def _safe_stem(name: str) -> str:
@@ -547,7 +548,11 @@ def api_export(req: ExportRequest):
 
 @app.post("/api/train")
 def api_train(req: TrainRequest):
-    result = start_training(export_first=req.export_first, sync_labels=req.sync_labels)
+    result = start_training(
+        export_first=req.export_first,
+        sync_labels=req.sync_labels,
+        epochs=req.epochs,
+    )
     if not result.get("ok"):
         raise HTTPException(409, result.get("error", "Cannot start training"))
     return result

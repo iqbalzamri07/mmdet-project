@@ -873,13 +873,19 @@
   $("btnTrain").onclick = async () => {
     try {
       await saveAnnotations().catch(() => {});
+      const raw = Number($("trainEpochs")?.value || 100);
+      const epochs = Math.round(raw);
+      if (!Number.isFinite(epochs) || epochs < 1 || epochs > 300) {
+        toast("Epochs must be between 1 and 300", "error");
+        return;
+      }
       const data = await api("/api/train", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ export_first: true, sync_labels: true }),
+        body: JSON.stringify({ export_first: true, sync_labels: true, epochs }),
       });
       state.trainJobId = data.job.job_id;
-      toast("Training started");
+      toast(`Training started (${epochs} epochs)`);
       if (state.pollTimer) clearInterval(state.pollTimer);
       state.pollTimer = setInterval(pollTrain, 2500);
       pollTrain();

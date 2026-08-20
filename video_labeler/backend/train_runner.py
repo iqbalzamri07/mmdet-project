@@ -60,10 +60,18 @@ def get_active_job() -> Optional[Dict[str, Any]]:
     return None
 
 
-def start_training(export_first: bool = True, sync_labels: bool = True) -> Dict[str, Any]:
+def start_training(
+    export_first: bool = True,
+    sync_labels: bool = True,
+    epochs: int = 100,
+) -> Dict[str, Any]:
     active = get_active_job()
     if active:
         return {"ok": False, "error": "A job is already running", "job": active}
+
+    epochs = int(epochs)
+    if epochs < 1 or epochs > 300:
+        return {"ok": False, "error": "Epochs must be between 1 and 300"}
 
     job_id = datetime.utcnow().strftime("train_%Y%m%d_%H%M%S")
     log_path = config.JOBS_DIR / f"{job_id}.log"
@@ -73,6 +81,7 @@ def start_training(export_first: bool = True, sync_labels: bool = True) -> Dict[
         "status": "queued",
         "created_at": datetime.utcnow().isoformat() + "Z",
         "export_first": export_first,
+        "epochs": epochs,
         "log_path": str(log_path),
         "pid": None,
         "export_summary": None,
@@ -87,6 +96,8 @@ def start_training(export_first: bool = True, sync_labels: bool = True) -> Dict[
         "video_labeler.backend.train_runner",
         "--job-id",
         job_id,
+        "--epochs",
+        str(epochs),
     ]
     if not export_first:
         cmd.append("--skip-export")
@@ -126,13 +137,19 @@ def stop_training(job_id: str) -> Dict[str, Any]:
     return {"ok": True, "job": job}
 
 
-def _run_job(job_id: str, skip_export: bool = False, skip_sync: bool = False) -> None:
+def _run_job(
+    job_id: str,
+    skip_export: bool = False,
+    skip_sync: bool = False,
+    epochs: int = 100,
+) -> None:
     job = get_job(job_id) or {
         "job_id": job_id,
         "status": "running",
         "created_at": datetime.utcnow().isoformat() + "Z",
         "log_path": str(config.JOBS_DIR / f"{job_id}.log"),
     }
+    epochs = max(1, min(300, int(epochs)))
     job["pid"] = os.getpid()
     job["status"] = "running"
     _write_job(job_id, job)
@@ -160,8 +177,11 @@ def _run_job(job_id: str, skip_export: bool = False, skip_sync: bool = False) ->
             raise RuntimeError(f"Train config missing: {config.TRAIN_CONFIG}")
 
         job["status"] = "training"
+        job["epochs"] = epochs
         _write_job(job_id, job)
-        print(f"[train] Starting SlowFast: {config.TRAIN_CONFIG}")
+        warmup = min(5, max(1, epochs // 5)) if epochs > 5 else max(1, min(2, epochs))
+        ckpt_interval = 5 if epochs >= 20 else (2 if epochs >= 8 else 1)
+        print(f"[train] Starting SlowFast: {config.TRAIN_CONFIG} ({epochs} epochs)")
         env = os.environ.copy()
         # Reduce fragmentation on small GPUs (RTX 2050 4GB)
         env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:64,expandable_segments:True")
@@ -170,6 +190,12 @@ def _run_job(job_id: str, skip_export: bool = False, skip_sync: bool = False) ->
             str(config.VENV_PYTHON),
             str(config.TRAIN_SCRIPT),
             str(config.TRAIN_CONFIG),
+            "--cfg-options",
+            f"train_cfg.max_epochs={epochs}",
+            f"param_scheduler.0.end={warmup}",
+            f"param_scheduler.1.T_max={epochs}",
+            f"param_scheduler.1.end={epochs}",
+            f"default_hooks.checkpoint.interval={ckpt_interval}",
         ]
         result = subprocess.run(
             cmd,
@@ -201,8 +227,14 @@ def main():
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--skip-export", action="store_true")
     parser.add_argument("--skip-sync-labels", action="store_true")
+    parser.add_argument("--epochs", type=int, default=100)
     args = parser.parse_args()
-    _run_job(args.job_id, skip_export=args.skip_export, skip_sync=args.skip_sync_labels)
+    _run_job(
+        args.job_id,
+        skip_export=args.skip_export,
+        skip_sync=args.skip_sync_labels,
+        epochs=args.epochs,
+    )
 
 
 if __name__ == "__main__":
