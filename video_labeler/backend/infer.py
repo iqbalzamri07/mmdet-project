@@ -45,17 +45,20 @@ for d in (TEST_INPUT_DIR, TEST_OUTPUT_DIR, TEST_JOBS_DIR):
 
 
 def list_checkpoints() -> List[Dict[str, Any]]:
-    """List available SlowFast checkpoints under work_dirs."""
+    """List available SlowFast .pth and .onnx files under work_dirs."""
     work = config.WORK_DIR
     items = []
     if not work.exists():
         return items
-    for path in sorted(work.glob("*.pth"), key=lambda p: p.stat().st_mtime, reverse=True):
+    files = list(work.glob("*.pth")) + list(work.glob("*.onnx"))
+    for path in sorted(files, key=lambda p: p.stat().st_mtime, reverse=True):
+        fmt = "onnx" if path.suffix.lower() == ".onnx" else "pth"
         items.append(
             {
                 "id": path.name,
                 "path": str(path),
                 "name": path.name,
+                "format": fmt,
                 "size_mb": round(path.stat().st_size / (1024 * 1024), 1),
                 "mtime": datetime.fromtimestamp(path.stat().st_mtime).isoformat(),
                 "recommended": path.name.startswith("best_acc") or path.name == "epoch_50.pth",
@@ -349,39 +352,109 @@ def _detect_persons(det_model, frame) -> List[Tuple[int, int, int, int]]:
     return persons
 
 
+IMAGENET_MEAN = np.array([123.675, 116.28, 103.53], dtype=np.float32).reshape(1, 3, 1, 1, 1)
+IMAGENET_STD = np.array([58.395, 57.12, 57.375], dtype=np.float32).reshape(1, 3, 1, 1, 1)
+
+
+def _crops_to_ncthw(crops: List[np.ndarray]) -> Optional[np.ndarray]:
+    valid = [c for c in crops if c is not None and c.size > 0 and c.shape[0] > 1 and c.shape[1] > 1]
+    if len(valid) < MIN_FRAMES:
+        return None
+    frames = [cv2.resize(c, TARGET_SIZE) for c in valid[:CLIP_LEN]]
+    while len(frames) < CLIP_LEN:
+        frames.append(frames[-1])
+    rgb = [cv2.cvtColor(f, cv2.COLOR_BGR2RGB) for f in frames]
+    arr = np.stack(rgb, axis=0).astype(np.float32)
+    arr = np.transpose(arr, (3, 0, 1, 2))[None, ...]
+    return (arr - IMAGENET_MEAN) / IMAGENET_STD
+
+
+class PthActionBackend:
+    def __init__(self, model):
+        self.model = model
+        self.kind = "pth"
+
+    def scores_from_crops(self, crops: List[np.ndarray]) -> Optional[np.ndarray]:
+        from mmaction.apis import inference_recognizer
+
+        valid = [c for c in crops if c is not None and c.size > 0 and c.shape[0] > 1 and c.shape[1] > 1]
+        if len(valid) < MIN_FRAMES:
+            return None
+        resized = [cv2.resize(c, TARGET_SIZE) for c in valid[:CLIP_LEN]]
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+        writer = cv2.VideoWriter(tmp_path, cv2.VideoWriter_fourcc(*"mp4v"), 10, TARGET_SIZE)
+        for frame in resized:
+            writer.write(frame)
+        writer.release()
+        try:
+            result = inference_recognizer(self.model, tmp_path)
+            return result.pred_score.detach().float().cpu().numpy().reshape(-1)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            torch.cuda.empty_cache()
+            gc.collect()
+
+
+class OnnxActionBackend:
+    def __init__(self, onnx_path: Path):
+        import onnxruntime as ort
+
+        available = ort.get_available_providers()
+        providers = [p for p in ("CUDAExecutionProvider", "CPUExecutionProvider") if p in available]
+        self.session = ort.InferenceSession(str(onnx_path), providers=providers or ["CPUExecutionProvider"])
+        self.input_name = self.session.get_inputs()[0].name
+        self.output_name = self.session.get_outputs()[0].name
+        self.kind = "onnx"
+        self.providers = providers
+
+    def scores_from_crops(self, crops: List[np.ndarray]) -> Optional[np.ndarray]:
+        tensor = _crops_to_ncthw(crops)
+        if tensor is None:
+            return None
+        out = self.session.run([self.output_name], {self.input_name: tensor})[0]
+        return np.asarray(out, dtype=np.float32).reshape(-1)
+
+
+def load_action_backend(model_path: Path, labels: List[str], log=None):
+    """Load SlowFast from .pth (MMAction2) or .onnx (ONNX Runtime)."""
+    from mmengine.config import Config
+
+    cfg = Config.fromfile(str(ACTION_CONFIG))
+    if hasattr(cfg, "model") and "cls_head" in cfg.model:
+        cfg.model["cls_head"]["num_classes"] = len(labels)
+    multi_label = _cfg_is_multilabel(cfg)
+    suffix = model_path.suffix.lower()
+    if suffix == ".onnx":
+        backend = OnnxActionBackend(model_path)
+        if log:
+            log(f"[infer] SlowFast ONNX ({', '.join(backend.providers)})")
+        return backend, multi_label
+    from mmaction.apis import init_recognizer
+
+    device_action = "cuda:0" if torch.cuda.is_available() else "cpu"
+    action_model = init_recognizer(cfg, str(model_path), device=device_action)
+    action_model.eval()
+    if log:
+        log(f"[infer] SlowFast .pth on {device_action} (multi_label={multi_label})")
+    return PthActionBackend(action_model), multi_label
+
+
 def _classify_crops(
-    action_model,
+    backend,
     crops: List[np.ndarray],
     labels: List[str],
     postures: List[str],
     activities: List[str],
     multi_label: bool,
 ) -> Dict[str, Any]:
-    from mmaction.apis import inference_recognizer
-
     empty = _compose_prediction("", 0.0, "", 0.0)
-    valid = [c for c in crops if c is not None and c.size > 0 and c.shape[0] > 1 and c.shape[1] > 1]
-    if len(valid) < MIN_FRAMES:
+    scores = backend.scores_from_crops(crops)
+    if scores is None:
         return empty
-
-    resized = [cv2.resize(c, TARGET_SIZE) for c in valid[:CLIP_LEN]]
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    tmp_path = tmp.name
-    tmp.close()
-    writer = cv2.VideoWriter(tmp_path, cv2.VideoWriter_fourcc(*"mp4v"), 10, TARGET_SIZE)
-    for frame in resized:
-        writer.write(frame)
-    writer.release()
-
-    try:
-        result = inference_recognizer(action_model, tmp_path)
-        scores = result.pred_score.detach().float().cpu().numpy().reshape(-1)
-        return _decode_posture_activity(scores, labels, postures, activities, multi_label)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        torch.cuda.empty_cache()
-        gc.collect()
+    return _decode_posture_activity(scores, labels, postures, activities, multi_label)
 
 
 _live_lock = threading.Lock()
@@ -392,33 +465,27 @@ def _get_live_models(checkpoint_path: Path) -> Dict[str, Any]:
     """Load detector + SlowFast once and reuse for camera clips."""
     global _live_bundle
     ckpt = str(checkpoint_path.resolve())
-    if _live_bundle.get("checkpoint") == ckpt and _live_bundle.get("action_model") is not None:
+    if _live_bundle.get("checkpoint") == ckpt and _live_bundle.get("action_backend") is not None:
         return _live_bundle
 
-    from mmengine.config import Config
-    from mmaction.apis import init_recognizer
     from mmdet.apis import init_detector
     from mmengine import init_default_scope
 
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:64,expandable_segments:True")
     labels, postures, activities = _load_label_taxonomy()
-    device_action = "cuda:0" if torch.cuda.is_available() else "cpu"
-    cfg = Config.fromfile(str(ACTION_CONFIG))
-    if hasattr(cfg, "model") and "cls_head" in cfg.model:
-        cfg.model["cls_head"]["num_classes"] = len(labels)
-    action_model = init_recognizer(cfg, ckpt, device=device_action)
-    action_model.eval()
+    backend, multi_label = load_action_backend(checkpoint_path, labels)
     init_default_scope("mmdet")
     det_model = init_detector(str(DET_CONFIG), str(DET_CHECKPOINT), device="cpu")
     _live_bundle = {
         "checkpoint": ckpt,
-        "action_model": action_model,
+        "action_backend": backend,
+        "action_model": backend,
         "det_model": det_model,
         "labels": labels,
         "postures": postures,
         "activities": activities,
-        "multi_label": _cfg_is_multilabel(cfg),
-        "device": device_action,
+        "multi_label": multi_label,
+        "device": getattr(backend, "kind", "pth"),
     }
     return _live_bundle
 
@@ -447,7 +514,7 @@ def run_live_clip(frames: List[np.ndarray], checkpoint_path: Path) -> Dict[str, 
                     continue
                 crops.append(frame[ya:yb, xa:xb])
             pred = _classify_crops(
-                bundle["action_model"],
+                bundle["action_backend"],
                 crops,
                 bundle["labels"],
                 bundle["postures"],
@@ -511,8 +578,6 @@ def run_inference(
     job_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run detect → SlowFast → annotated video. Updates job file if job_id given."""
-    from mmengine.config import Config
-    from mmaction.apis import init_recognizer
     from mmdet.apis import init_detector
     from mmengine import init_default_scope
 
@@ -545,16 +610,7 @@ def run_inference(
     log(f"[infer] activities={activities}")
     log(f"[infer] activity_threshold={ACTIVITY_THRESHOLD:.0%} posture_threshold={POSTURE_THRESHOLD:.0%}")
 
-    # Load models
-    device_action = "cuda:0" if torch.cuda.is_available() else "cpu"
-    cfg = Config.fromfile(str(ACTION_CONFIG))
-    # Keep head size consistent with checkpoint / labels
-    if hasattr(cfg, "model") and "cls_head" in cfg.model:
-        cfg.model["cls_head"]["num_classes"] = len(labels)
-    action_model = init_recognizer(cfg, str(checkpoint_path), device=device_action)
-    action_model.eval()
-    multi_label = _cfg_is_multilabel(cfg)
-    log(f"[infer] SlowFast on {device_action} (multi_label={multi_label})")
+    action_backend, multi_label = load_action_backend(checkpoint_path, labels, log=log)
 
     init_default_scope("mmdet")
     det_model = init_detector(str(DET_CONFIG), str(DET_CHECKPOINT), device="cpu")
@@ -611,7 +667,7 @@ def run_inference(
                 crop = frames[fidx][max(0, y1) : y2, max(0, x1) : x2]
                 crops.append(crop)
             pred = _classify_crops(
-                action_model, crops, labels, postures, activities, multi_label
+                action_backend, crops, labels, postures, activities, multi_label
             )
             for fidx, _ in window:
                 frame_labels[fidx] = pred
@@ -715,7 +771,7 @@ def run_inference(
     raw_out.unlink(missing_ok=True)
 
     # Free models
-    del action_model
+    del action_backend
     del det_model
     torch.cuda.empty_cache()
     gc.collect()

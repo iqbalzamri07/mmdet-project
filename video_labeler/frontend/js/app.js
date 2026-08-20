@@ -863,6 +863,7 @@
         state.pollTimer = null;
         if (job.status === "completed") toast("Training completed", "ok");
         if (job.status === "failed") toast(job.error || "Training failed", "error");
+        if (job.status === "completed") loadModels();
       }
     } catch (err) {
       console.error(err);
@@ -1090,32 +1091,110 @@
   async function loadModels() {
     try {
       const data = await api("/api/models");
-      const sel = $("modelSelect");
-      sel.innerHTML = "";
       const models = data.models || [];
+      const pthModels = models.filter((m) => (m.format || "pth") !== "onnx");
+      fillModelSelect($("modelSelect"), models, "No checkpoints found — train first");
+      fillModelSelect($("onnxSourceSelect"), pthModels, "No .pth checkpoints — train first");
       if (!models.length) {
-        sel.innerHTML = '<option value="">No checkpoints found — train first</option>';
-        $("modelHint").textContent = "No .pth files in work_dirs/slowfast_multilabel/";
+        $("modelHint").textContent = "No .pth/.onnx files in work_dirs/slowfast_multilabel/";
         return;
       }
-      models.forEach((m) => {
-        const opt = document.createElement("option");
-        opt.value = m.name;
-        opt.textContent = `${m.name}${m.recommended ? " ★" : ""} (${m.size_mb} MB)`;
-        sel.appendChild(opt);
-      });
-      const best = models.find((m) => m.name.startsWith("best_acc")) || models[0];
-      sel.value = best.name;
-      $("modelHint").textContent = `Selected: ${best.name}`;
+      const selected = $("modelSelect")?.value;
+      const picked = models.find((m) => m.name === selected) || models.find((m) => m.recommended) || models[0];
+      $("modelHint").textContent = picked
+        ? `Selected: ${picked.name} (${picked.format === "onnx" ? "ONNX" : "PyTorch"})`
+        : "";
     } catch (err) {
       toast(err.message, "error");
     }
   }
 
+  function fillModelSelect(sel, models, emptyText) {
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = "";
+    if (!models.length) {
+      sel.innerHTML = `<option value="">${emptyText}</option>`;
+      return;
+    }
+    models.forEach((m) => {
+      const fmt = m.format === "onnx" ? "ONNX" : "PyTorch";
+      const opt = document.createElement("option");
+      opt.value = m.name;
+      opt.textContent = `${m.name} · ${fmt} (${m.size_mb} MB)`;
+      sel.appendChild(opt);
+    });
+    const keep = models.find((m) => m.name === prev);
+    const best =
+      models.find((m) => m.recommended) ||
+      models.find((m) => (m.format || "pth") !== "onnx") ||
+      models[0];
+    sel.value = keep ? keep.name : best.name;
+  }
+
   $("btnRefreshModels").onclick = () => loadModels();
   $("modelSelect").onchange = () => {
-    $("modelHint").textContent = `Selected: ${$("modelSelect").value}`;
+    const name = $("modelSelect").value;
+    const isOnnx = name.toLowerCase().endsWith(".onnx");
+    $("modelHint").textContent = name ? `Selected: ${name} (${isOnnx ? "ONNX" : "PyTorch"})` : "";
   };
+
+  let onnxExportJobId = null;
+  let onnxPollTimer = null;
+
+  async function pollOnnxExport() {
+    if (!onnxExportJobId) return;
+    try {
+      const data = await api(`/api/models/export-onnx/status?job_id=${encodeURIComponent(onnxExportJobId)}`);
+      const job = data.job;
+      if (!job) return;
+      const hint = $("onnxExportHint");
+      const lines = job.log || [];
+      if (hint) {
+        hint.textContent = lines.length ? lines.slice(-2).join(" · ") : `(${job.status})`;
+      }
+      if (["completed", "failed"].includes(job.status)) {
+        clearInterval(onnxPollTimer);
+        onnxPollTimer = null;
+        if (job.status === "completed") {
+          toast(`ONNX saved: ${PathName(job.output || job.checkpoint)}`, "ok");
+          loadModels();
+        } else {
+          toast(job.error || "ONNX export failed", "error");
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function PathName(p) {
+    if (!p) return "model.onnx";
+    const parts = String(p).split(/[/\\]/);
+    return parts[parts.length - 1];
+  }
+
+  $("btnExportOnnx")?.addEventListener("click", async () => {
+    const checkpoint = $("onnxSourceSelect")?.value;
+    if (!checkpoint) {
+      toast("Train a .pth checkpoint first", "error");
+      return;
+    }
+    try {
+      const data = await api("/api/models/export-onnx", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ checkpoint }),
+      });
+      onnxExportJobId = data.job.job_id;
+      toast("ONNX export started — this can take a few minutes");
+      if (onnxPollTimer) clearInterval(onnxPollTimer);
+      onnxPollTimer = setInterval(pollOnnxExport, 2000);
+      pollOnnxExport();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
 
   $("testFileInput").onchange = (e) => {
     const file = e.target.files?.[0] || null;
@@ -1391,6 +1470,7 @@
     try {
       await loadLabels();
       await loadVideos();
+      await loadModels();
       await pollTrain();
       if (state.trainJobId) {
         state.pollTimer = setInterval(pollTrain, 2500);

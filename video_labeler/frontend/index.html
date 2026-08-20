@@ -73,6 +73,12 @@
             <button class="btn btn-ghost" id="btnExport" type="button">Export</button>
             <button class="btn btn-accent" id="btnTrain" type="button">Train</button>
           </div>
+          <label class="field block-field" style="margin-top: 12px">
+            <span>Convert checkpoint</span>
+            <select id="onnxSourceSelect"></select>
+          </label>
+          <button class="btn btn-ghost btn-block" id="btnExportOnnx" type="button">Export ONNX</button>
+          <p class="hint" id="onnxExportHint">Converts a trained .pth to ONNX for Test.</p>
           <div class="nav-panel-section">
             <div class="panel-head">
               <h2>Training log</h2>
@@ -212,7 +218,7 @@
               <span>Checkpoint</span>
               <select id="modelSelect"></select>
             </label>
-            <p class="hint" id="modelHint">Pick a trained .pth from work_dirs.</p>
+            <p class="hint" id="modelHint">Pick a trained .pth or .onnx from work_dirs.</p>
           </section>
 
           <section class="sidebar-card">
@@ -279,7 +285,7 @@
         <div class="stage stage-fill" id="testEmpty">
           <div class="empty-state">
             <h2>Test your trained model</h2>
-            <p>Select a checkpoint, then upload a video or start the camera. Results show person boxes with posture and activity.</p>
+            <p>Select a .pth or ONNX SlowFast checkpoint, then upload a video or start the camera. Results show person boxes with posture and activity.</p>
           </div>
         </div>
 

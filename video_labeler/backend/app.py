@@ -37,6 +37,12 @@ from .infer import (
     run_live_clip,
     start_inference_job,
 )
+from .onnx_export import (
+    get_active_onnx_export,
+    get_onnx_export_job,
+    resolve_work_file,
+    start_onnx_export,
+)
 from .train_runner import get_active_job, get_job, list_jobs, start_training, stop_training
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
@@ -590,6 +596,40 @@ def api_models():
     return {"models": list_checkpoints()}
 
 
+class OnnxExportRequest(BaseModel):
+    checkpoint: str  # .pth filename under work_dirs
+
+
+@app.post("/api/models/export-onnx")
+def api_export_onnx(req: OnnxExportRequest):
+    try:
+        result = start_onnx_export(req.checkpoint)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not result.get("ok"):
+        raise HTTPException(409, result.get("error", "Cannot start ONNX export"))
+    return result
+
+
+@app.get("/api/models/export-onnx/status")
+def api_export_onnx_status(job_id: Optional[str] = None):
+    if job_id:
+        job = get_onnx_export_job(job_id)
+        if not job:
+            raise HTTPException(404, "Export job not found")
+    else:
+        job = get_active_onnx_export()
+    if not job:
+        return {"job": None}
+    log_path = Path(job.get("log_path") or "")
+    lines = []
+    if log_path.exists():
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-40:]
+    out = dict(job)
+    out["log"] = lines
+    return {"job": out}
+
+
 @app.post("/api/test/upload")
 async def test_upload(file: UploadFile = File(...)):
     if not file.filename:
@@ -628,11 +668,12 @@ async def test_run(
     """
     Start inference.
     Provide one of: library video_id, previously uploaded test_video filename, or file upload.
-    checkpoint: e.g. best_acc_top1_epoch_5.pth
+    checkpoint: e.g. best_acc_top1_epoch_5.pth or epoch_100.onnx
     """
-    ckpt = config.WORK_DIR / checkpoint
-    if not ckpt.exists():
-        raise HTTPException(404, f"Checkpoint not found: {checkpoint}")
+    try:
+        ckpt = resolve_work_file(checkpoint)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(404, str(exc)) from exc
 
     video_path: Optional[Path] = None
     if file is not None and file.filename:
@@ -664,9 +705,10 @@ async def test_live(
     frames: List[UploadFile] = File(...),
 ):
     """Classify a short webcam clip (JPEG frames) with person boxes + posture/activity."""
-    ckpt = config.WORK_DIR / checkpoint
-    if not ckpt.exists():
-        raise HTTPException(404, f"Checkpoint not found: {checkpoint}")
+    try:
+        ckpt = resolve_work_file(checkpoint)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(404, str(exc)) from exc
     decoded: List[Any] = []
     for item in frames:
         raw = await item.read()
