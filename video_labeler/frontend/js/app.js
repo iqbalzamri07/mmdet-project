@@ -838,7 +838,6 @@
     const isLabel = mode === "label";
     $("modeLabel").classList.toggle("hidden", !isLabel);
     $("modeTest").classList.toggle("hidden", isLabel);
-    $("labelActions").classList.toggle("hidden", !isLabel);
     $("tabLabel").classList.toggle("active", isLabel);
     $("tabTest").classList.toggle("active", !isLabel);
     if (!isLabel) loadModels();

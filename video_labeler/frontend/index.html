@@ -24,21 +24,24 @@
         <button type="button" class="mode-tab active" data-mode="label" id="tabLabel">Label</button>
         <button type="button" class="mode-tab" data-mode="test" id="tabTest">Test</button>
       </nav>
-      <div class="top-actions">
-        <div class="top-actions-group" id="labelActions">
-          <label class="btn btn-primary file-btn">
-            Upload videos
-            <input type="file" id="fileInput" accept="video/*" multiple hidden />
-          </label>
-          <button class="btn btn-ghost" id="btnExport" type="button">Export dataset</button>
-          <button class="btn btn-accent" id="btnTrain" type="button">Train model</button>
-        </div>
-      </div>
+      <div class="top-actions" aria-hidden="true"></div>
     </header>
 
     <!-- LABEL MODE -->
     <main class="layout" id="modeLabel">
       <aside class="sidebar">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Dataset</h2>
+          </div>
+          <label class="btn btn-primary file-btn btn-block">
+            Upload videos
+            <input type="file" id="fileInput" accept="video/*" multiple hidden />
+          </label>
+          <button class="btn btn-ghost btn-block" id="btnExport" type="button">Export dataset</button>
+          <button class="btn btn-accent btn-block" id="btnTrain" type="button">Train model</button>
+        </section>
+
         <section class="panel classes-panel">
           <div class="panel-head">
             <h2>Classes</h2>
