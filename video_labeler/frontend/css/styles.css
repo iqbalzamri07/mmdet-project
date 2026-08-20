@@ -369,6 +369,22 @@ html, body {
   font-weight: 600;
   font-size: 0.75rem;
 }
+.chip-remove {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 1;
+  font-size: 0.95rem;
+  cursor: pointer;
+  border-radius: 999px;
+}
+.chip-remove:hover {
+  background: var(--coral-soft);
+  color: var(--coral);
+}
 .count-total {
   font-size: 0.75rem;
   font-weight: 600;

@@ -146,10 +146,34 @@ def set_labels(payload: Dict[str, Any]):
         postures = list(config.POSTURE_LABELS)
 
     extras = [l for l in labels if l not in postures and l not in activities]
+    if not postures:
+        raise HTTPException(400, "Keep at least one posture")
     config.POSTURE_LABELS = postures
     config.ACTIVITY_LABELS = list(dict.fromkeys(activities + extras))
     config.persist_label_taxonomy()
     return {
+        "labels": config.ACTION_LABELS,
+        "postures": config.POSTURE_LABELS,
+        "activities": config.ACTIVITY_LABELS,
+    }
+
+
+@app.delete("/api/labels/{name}")
+def delete_label(name: str):
+    name = name.strip().replace(" ", "_")
+    if not name:
+        raise HTTPException(400, "Name is empty")
+    postures = [p for p in config.POSTURE_LABELS if p != name]
+    activities = [a for a in config.ACTIVITY_LABELS if a != name]
+    if name not in config.POSTURE_LABELS and name not in config.ACTIVITY_LABELS:
+        raise HTTPException(404, f"Unknown class: {name}")
+    if not postures:
+        raise HTTPException(400, "Keep at least one posture")
+    config.POSTURE_LABELS = postures
+    config.ACTIVITY_LABELS = activities
+    config.persist_label_taxonomy()
+    return {
+        "ok": True,
         "labels": config.ACTION_LABELS,
         "postures": config.POSTURE_LABELS,
         "activities": config.ACTIVITY_LABELS,

@@ -11,8 +11,8 @@ from mmaction.models import (ActionDataPreprocessor, Recognizer3D,
                              ResNet3dSlowFast, SlowFastHead)
 
 # Classes (kept in sync by ActionMark export/train)
-ACTION_LABELS = ["sitting", "standing", "walking", "calling", "playing_phone", "smoking", "eating"]
-NUM_CLASSES = 7
+ACTION_LABELS = ["sitting", "standing", "walking", "calling", "playing_phone", "smoking"]
+NUM_CLASSES = 6
 
 model = dict(
     type=Recognizer3D,

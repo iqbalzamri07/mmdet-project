@@ -22,6 +22,7 @@
     drawOrigin: null,
     trainJobId: null,
     pollTimer: null,
+    editingClasses: false,
   };
 
   const videoEl = $("video");
@@ -91,6 +92,19 @@
     const chip = document.createElement("span");
     chip.className = "chip";
     chip.innerHTML = `<span class="chip-name">${label}</span><span class="chip-count">${count}</span>`;
+    if (state.editingClasses) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chip-remove";
+      btn.title = `Remove ${label}`;
+      btn.setAttribute("aria-label", `Remove ${label}`);
+      btn.textContent = "×";
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        removeClass(label);
+      };
+      chip.appendChild(btn);
+    }
     return chip;
   }
 
@@ -143,6 +157,12 @@
       const total = state.totalCount ?? Object.values(state.counts).reduce((a, b) => a + b, 0);
       totalEl.textContent = `${total} annotated`;
     }
+    const editBtn = $("btnEditLabels");
+    if (editBtn) {
+      editBtn.textContent = state.editingClasses ? "Done" : "Edit";
+      editBtn.classList.toggle("btn-primary", state.editingClasses);
+      editBtn.classList.toggle("btn-ghost", !state.editingClasses);
+    }
   }
 
   async function loadLabelCounts() {
@@ -153,6 +173,24 @@
     state.counts = data.counts || {};
     state.totalCount = data.total || 0;
     renderLabels();
+  }
+
+  async function removeClass(name) {
+    const count = state.counts[name] || 0;
+    const kind = isPosture(name) ? "posture" : "activity";
+    if (isPosture(name) && (state.postures || []).length <= 1) {
+      toast("Keep at least one posture", "error");
+      return;
+    }
+    const extra = count ? ` It is used in ${count} segment${count === 1 ? "" : "s"} (those tags stay until you re-save).` : "";
+    if (!window.confirm(`Remove ${kind} "${name}"?${extra}`)) return;
+    try {
+      await api(`/api/labels/${encodeURIComponent(name)}`, { method: "DELETE" });
+      await loadLabelCounts();
+      toast(`Removed ${name}`, "ok");
+    } catch (err) {
+      toast(err.message, "error");
+    }
   }
 
   function appendVideoItem(list, v) {
@@ -535,6 +573,11 @@
     clearTimeout(_searchTimer);
     _searchTimer = setTimeout(() => fetchVideos(true), 300);
   });
+
+  $("btnEditLabels").onclick = () => {
+    state.editingClasses = !state.editingClasses;
+    renderLabels();
+  };
 
   $("btnAddLabel").onclick = async () => {
     const input = $("newLabelInput");
