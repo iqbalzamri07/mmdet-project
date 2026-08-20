@@ -931,7 +931,132 @@
     stream: null,
     liveBusy: false,
     lastPersons: [],
+    libraryQuery: "",
+    libraryPage: 1,
+    libraryResults: [],
+    libraryPaging: { total: 0, pages: 1 },
   };
+
+  function formatTestDate(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso.slice(0, 16).replace("T", " ");
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function setTestNavTab(tab) {
+    const isRun = tab === "run";
+    $("testNavRun")?.classList.toggle("active", isRun);
+    $("testNavResults")?.classList.toggle("active", !isRun);
+    $("testPanelRun")?.classList.toggle("active", isRun);
+    $("testPanelResults")?.classList.toggle("active", !isRun);
+    if ($("testPanelRun")) $("testPanelRun").hidden = !isRun;
+    if ($("testPanelResults")) $("testPanelResults").hidden = isRun;
+    if (!isRun) loadTestLibrary().catch((e) => toast(e.message, "error"));
+  }
+
+  $("testNavRun")?.addEventListener("click", () => setTestNavTab("run"));
+  $("testNavResults")?.addEventListener("click", () => setTestNavTab("results"));
+
+  function renderTestLibrary() {
+    const list = $("testResultList");
+    if (!list) return;
+    list.innerHTML = "";
+    const items = testState.libraryResults || [];
+    const total = testState.libraryPaging?.total || 0;
+    $("testLibraryCount").textContent = `${total} result${total === 1 ? "" : "s"}`;
+
+    if (!items.length) {
+      list.innerHTML = '<li class="meta">No processed videos yet — run inference first.</li>';
+      return;
+    }
+
+    items.forEach((item) => {
+      const li = document.createElement("li");
+      li.className = "test-result-item";
+      if (item.job_id === testState.jobId) li.classList.add("active");
+      const name = item.source_name || item.job_id;
+      li.innerHTML = `
+        <div class="video-row">
+          <div class="video-info">
+            <div class="name" title="${name}">${name}</div>
+            <div class="meta">${formatTestDate(item.finished_at)} · ${item.checkpoint}</div>
+            <div class="meta-line">
+              <span class="badge done">${item.person_count} person${item.person_count === 1 ? "" : "s"}</span>
+              <span class="badge">${item.summary}</span>
+            </div>
+          </div>
+        </div>`;
+      li.querySelector(".video-info").onclick = () => {
+        selectTestResult(item.job_id).catch((e) => toast(e.message, "error"));
+      };
+      list.appendChild(li);
+    });
+
+    const page = testState.libraryPage;
+    const pages = testState.libraryPaging?.pages || 1;
+    if (page < pages) {
+      const more = document.createElement("li");
+      more.className = "load-more";
+      more.innerHTML = `<button class="btn btn-ghost btn-small" type="button">Load more…</button>`;
+      more.querySelector("button").onclick = () => {
+        testState.libraryPage++;
+        loadTestLibrary(false).catch((e) => toast(e.message, "error"));
+      };
+      list.appendChild(more);
+    }
+  }
+
+  async function loadTestLibrary(reset = true) {
+    if (reset) testState.libraryPage = 1;
+    const params = new URLSearchParams({
+      page: testState.libraryPage,
+      per_page: 50,
+    });
+    const q = (testState.libraryQuery || "").trim();
+    if (q) params.set("q", q);
+    const data = await api(`/api/test/library?${params}`);
+    const results = data.results || [];
+    if (reset || testState.libraryPage === 1) {
+      testState.libraryResults = results;
+    } else {
+      const seen = new Set(testState.libraryResults.map((r) => r.job_id));
+      results.forEach((r) => {
+        if (!seen.has(r.job_id)) testState.libraryResults.push(r);
+      });
+    }
+    testState.libraryPaging = {
+      total: data.total || 0,
+      pages: data.pages || 1,
+    };
+    renderTestLibrary();
+  }
+
+  async function selectTestResult(jobId) {
+    const data = await api(`/api/test/status?job_id=${encodeURIComponent(jobId)}`);
+    if (!data.job) throw new Error("Result not found");
+    testState.jobId = jobId;
+    showTestResult(data.job);
+    renderTestLibrary();
+  }
+
+  $("btnRefreshTestLibrary")?.addEventListener("click", () => {
+    loadTestLibrary(true).catch((e) => toast(e.message, "error"));
+  });
+
+  let _testSearchTimer = null;
+  $("testLibrarySearch")?.addEventListener("input", (e) => {
+    testState.libraryQuery = e.target.value;
+    clearTimeout(_testSearchTimer);
+    _testSearchTimer = setTimeout(() => {
+      loadTestLibrary(true).catch((err) => toast(err.message, "error"));
+    }, 300);
+  });
 
   function setTestSource(source) {
     testState.source = source;
@@ -952,7 +1077,10 @@
     $("tabLabel").classList.toggle("active", isLabel);
     $("tabTest").classList.toggle("active", !isLabel);
     if (isLabel) stopCamera();
-    if (!isLabel) loadModels();
+    if (!isLabel) {
+      loadModels();
+      loadTestLibrary(true).catch(() => {});
+    }
     relayoutPlayers();
   }
 
@@ -1001,16 +1129,18 @@
       const data = await api(`/api/test/status?job_id=${encodeURIComponent(testState.jobId)}`);
       const job = data.job;
       if (!job) return;
+      const done = job.status === "completed" || Boolean(job.finished_at && job.output_video);
       const pill = $("testPill");
-      pill.textContent = job.status;
-      pill.className = `status-pill ${job.status}`;
+      pill.textContent = done ? "completed" : job.status;
+      pill.className = `status-pill ${done ? "completed" : job.status}`;
       const lines = job.log || [];
       $("testLog").textContent = lines.length ? lines.join("\n") : `(${job.status})`;
 
-      if (job.status === "completed") {
+      if (done) {
         clearInterval(testState.pollTimer);
         testState.pollTimer = null;
         showTestResult(job);
+        loadTestLibrary(true).catch(() => {});
         toast("Inference complete", "ok");
       } else if (job.status === "failed") {
         clearInterval(testState.pollTimer);

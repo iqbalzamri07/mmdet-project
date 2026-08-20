@@ -33,6 +33,7 @@ from .infer import (
     get_test_job,
     list_checkpoints,
     list_test_jobs,
+    list_test_library,
     run_live_clip,
     start_inference_job,
 )
@@ -681,6 +682,15 @@ async def test_live(
         return run_live_clip(decoded, ckpt)
     except Exception as exc:
         raise HTTPException(500, str(exc)) from exc
+
+
+@app.get("/api/test/library")
+def test_library(
+    page: int = 1,
+    per_page: int = 50,
+    q: Optional[str] = None,
+):
+    return list_test_library(page=page, per_page=per_page, q=q or "")
 
 
 @app.get("/api/test/status")

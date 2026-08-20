@@ -91,6 +91,96 @@ def list_test_jobs(limit: int = 20) -> List[Dict[str, Any]]:
     return jobs
 
 
+def _job_source_name(job: Dict[str, Any]) -> str:
+    video = job.get("video")
+    if video:
+        return Path(video).name
+    for line in job.get("log") or []:
+        if isinstance(line, str) and line.startswith("[infer] video="):
+            return line.split("=", 1)[1].strip()
+    return job.get("job_id") or "Unknown"
+
+
+def _job_has_output(job: Dict[str, Any]) -> bool:
+    job_id = job.get("job_id") or ""
+    out_path = Path(job.get("output_video") or TEST_OUTPUT_DIR / f"{job_id}.mp4")
+    return bool(job_id and out_path.exists())
+
+
+def _job_library_entry(job: Dict[str, Any]) -> Dict[str, Any]:
+    job_id = job.get("job_id") or ""
+    out_path = Path(job.get("output_video") or TEST_OUTPUT_DIR / f"{job_id}.mp4")
+    checkpoint = job.get("checkpoint") or ""
+    ckpt_name = Path(checkpoint).name if checkpoint else "—"
+    persons = job.get("persons") or []
+    status = job.get("status") or "unknown"
+    if out_path.exists() and status not in ("failed",):
+        status = "completed"
+    labels = []
+    for p in persons:
+        parts = [p.get("posture"), p.get("activity")]
+        label = " + ".join(x for x in parts if x) or p.get("label") or ""
+        if label and label not in labels:
+            labels.append(label)
+    summary = ", ".join(labels[:3])
+    if len(labels) > 3:
+        summary += f" +{len(labels) - 3}"
+    return {
+        "job_id": job_id,
+        "status": status,
+        "source_name": _job_source_name(job),
+        "checkpoint": ckpt_name,
+        "finished_at": job.get("finished_at") or job.get("updated_at") or job.get("created_at"),
+        "created_at": job.get("created_at"),
+        "num_frames": job.get("num_frames"),
+        "fps": job.get("fps"),
+        "person_count": len(persons),
+        "summary": summary or "No detections",
+        "output_url": f"/api/test/result/{job_id}/video",
+        "has_output": out_path.exists(),
+    }
+
+
+def list_test_library(
+    page: int = 1,
+    per_page: int = 50,
+    q: str = "",
+) -> Dict[str, Any]:
+    """List completed inference outputs for the test-page library."""
+    items: List[Dict[str, Any]] = []
+    for p in sorted(TEST_JOBS_DIR.glob("*.json"), reverse=True):
+        with open(p, "r", encoding="utf-8") as f:
+            job = json.load(f)
+        if not _job_has_output(job):
+            continue
+        items.append(_job_library_entry(job))
+
+    query = (q or "").strip().lower()
+    if query:
+        items = [
+            item
+            for item in items
+            if query in item["source_name"].lower()
+            or query in item["job_id"].lower()
+            or query in item["checkpoint"].lower()
+            or query in item["summary"].lower()
+        ]
+
+    total = len(items)
+    per_page = max(1, min(per_page, 200))
+    page = max(1, page)
+    start = (page - 1) * per_page
+    page_items = items[start : start + per_page]
+    pages = max(1, (total + per_page - 1) // per_page)
+    return {
+        "results": page_items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": pages,
+    }
+
+
 class _PersonTracker:
     def __init__(self, iou_threshold: float = 0.2, max_missing: int = 15):
         self.next_id = 0
@@ -657,7 +747,7 @@ def run_inference(
         "finished_at": datetime.utcnow().isoformat() + "Z",
     }
     _write_job(job_id, result)
-    log(f"[infer] done → {final_out.name}")
+    print(f"[infer] done → {final_out.name}")
     return result
 
 

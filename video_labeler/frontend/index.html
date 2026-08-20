@@ -196,59 +196,83 @@
 
     <!-- TEST MODE -->
     <main class="layout layout-test hidden" id="modeTest">
-      <aside class="sidebar">
-        <section class="panel">
-          <div class="panel-head">
-            <h2>Model</h2>
-            <button class="linkish" id="btnRefreshModels" type="button">Refresh</button>
-          </div>
-          <label class="field block-field">
-            <span>Checkpoint</span>
-            <select id="modelSelect"></select>
-          </label>
-          <p class="hint" id="modelHint">Pick a trained .pth from work_dirs.</p>
-        </section>
+      <aside class="nav-rail test-nav-rail">
+        <nav class="nav-tabs" aria-label="Test sidebar">
+          <button type="button" class="nav-tab active" id="testNavRun">Run</button>
+          <button type="button" class="nav-tab" id="testNavResults">Results</button>
+        </nav>
 
-        <section class="panel">
-          <div class="panel-head">
-            <h2>Source</h2>
-          </div>
-          <div class="source-tabs">
-            <button type="button" class="mode-tab active" id="srcVideo">Video file</button>
-            <button type="button" class="mode-tab" id="srcCamera">Camera</button>
-          </div>
-        </section>
+        <div class="nav-panel active" id="testPanelRun">
+          <section class="sidebar-card">
+            <div class="panel-head">
+              <h2>Model</h2>
+              <button class="linkish" id="btnRefreshModels" type="button">Refresh</button>
+            </div>
+            <label class="field block-field">
+              <span>Checkpoint</span>
+              <select id="modelSelect"></select>
+            </label>
+            <p class="hint" id="modelHint">Pick a trained .pth from work_dirs.</p>
+          </section>
 
-        <section class="panel" id="panelTestVideo">
-          <div class="panel-head">
-            <h2>Test video</h2>
-          </div>
-          <label class="btn btn-primary file-btn btn-block">
-            Upload test video
-            <input type="file" id="testFileInput" accept="video/*" hidden />
-          </label>
-          <p class="hint" id="testFileName">No file selected</p>
-          <button class="btn btn-accent btn-block" id="btnRunTest" type="button">
-            Run inference
-          </button>
-        </section>
+          <section class="sidebar-card">
+            <div class="panel-head">
+              <h2>Source</h2>
+            </div>
+            <div class="source-tabs">
+              <button type="button" class="mode-tab active" id="srcVideo">Video file</button>
+              <button type="button" class="mode-tab" id="srcCamera">Camera</button>
+            </div>
+          </section>
 
-        <section class="panel hidden" id="panelTestCamera">
-          <div class="panel-head">
-            <h2>Camera</h2>
-          </div>
-          <button class="btn btn-primary btn-block" id="btnStartCam" type="button">Start camera</button>
-          <button class="btn btn-ghost btn-block hidden" id="btnStopCam" type="button">Stop camera</button>
-          <p class="hint">Uses your webcam. First run loads models and can take a minute.</p>
-        </section>
+          <section class="sidebar-card" id="panelTestVideo">
+            <div class="panel-head">
+              <h2>Test video</h2>
+            </div>
+            <label class="btn btn-primary file-btn btn-block">
+              Upload test video
+              <input type="file" id="testFileInput" accept="video/*" hidden />
+            </label>
+            <p class="hint" id="testFileName">No file selected</p>
+            <button class="btn btn-accent btn-block" id="btnRunTest" type="button">
+              Run inference
+            </button>
+          </section>
 
-        <section class="panel">
-          <div class="panel-head">
-            <h2>Job</h2>
-            <span class="status-pill" id="testPill">idle</span>
+          <section class="sidebar-card hidden" id="panelTestCamera">
+            <div class="panel-head">
+              <h2>Camera</h2>
+            </div>
+            <button class="btn btn-primary btn-block" id="btnStartCam" type="button">Start camera</button>
+            <button class="btn btn-ghost btn-block hidden" id="btnStopCam" type="button">Stop camera</button>
+            <p class="hint">Uses your webcam. First run loads models and can take a minute.</p>
+          </section>
+
+          <section class="sidebar-card">
+            <div class="panel-head">
+              <h2>Job</h2>
+              <span class="status-pill" id="testPill">idle</span>
+            </div>
+            <pre class="train-log" id="testLog">Upload a video and run inference.</pre>
+          </section>
+        </div>
+
+        <div class="nav-panel" id="testPanelResults" hidden>
+          <div class="nav-panel-toolbar">
+            <span class="count-total" id="testLibraryCount">0 results</span>
+            <button class="linkish" id="btnRefreshTestLibrary" type="button">Refresh</button>
           </div>
-          <pre class="train-log" id="testLog">Upload a video and run inference.</pre>
-        </section>
+          <input
+            id="testLibrarySearch"
+            class="video-search"
+            type="search"
+            placeholder="Search results…"
+            autocomplete="off"
+          />
+          <div class="library-body" id="testLibraryBody">
+            <ul class="video-list" id="testResultList"></ul>
+          </div>
+        </div>
       </aside>
 
       <section class="workspace workspace-test">

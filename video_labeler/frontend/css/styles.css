@@ -616,7 +616,60 @@ html, body {
 }
 
 .layout-test {
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+}
+
+.test-nav-rail .sidebar-card {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0 0 14px;
+  box-shadow: none;
+}
+
+.test-nav-rail .sidebar-card + .sidebar-card {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.test-nav-rail #testPanelRun {
+  gap: 0;
+  overflow-y: auto;
+}
+
+.test-nav-rail #testPanelResults .library-body {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.test-nav-rail #testResultList {
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+}
+
+.test-result-item .meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.test-result-item .badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #eef3f6;
+  color: var(--muted);
+}
+
+.test-result-item .badge.done {
+  background: #e7f6f4;
+  color: var(--teal-deep);
 }
 
 .sidebar {
