@@ -832,7 +832,24 @@
     file: null,
     jobId: null,
     pollTimer: null,
+    source: "video",
+    cameraOn: false,
+    stream: null,
+    liveBusy: false,
+    lastPersons: [],
   };
+
+  function setTestSource(source) {
+    testState.source = source;
+    $("srcVideo").classList.toggle("active", source === "video");
+    $("srcCamera").classList.toggle("active", source === "camera");
+    $("panelTestVideo").classList.toggle("hidden", source !== "video");
+    $("panelTestCamera").classList.toggle("hidden", source !== "camera");
+    if (source === "video") stopCamera();
+  }
+
+  $("srcVideo").onclick = () => setTestSource("video");
+  $("srcCamera").onclick = () => setTestSource("camera");
 
   function setMode(mode) {
     const isLabel = mode === "label";
@@ -840,6 +857,7 @@
     $("modeTest").classList.toggle("hidden", isLabel);
     $("tabLabel").classList.toggle("active", isLabel);
     $("tabTest").classList.toggle("active", !isLabel);
+    if (isLabel) stopCamera();
     if (!isLabel) loadModels();
   }
 
@@ -910,8 +928,12 @@
   }
 
   function showTestResult(job) {
+    stopCamera();
     $("testEmpty").classList.add("hidden");
     $("testActive").classList.remove("hidden");
+    $("liveStack").classList.add("hidden");
+    $("resultStack").classList.remove("hidden");
+    $("btnDownloadResult").classList.remove("hidden");
     const url = `/api/test/result/${job.job_id}/video?t=${Date.now()}`;
     const vid = $("resultVideo");
     vid.src = url;
@@ -939,6 +961,7 @@
   }
 
   $("btnRunTest").onclick = async () => {
+    stopCamera();
     const checkpoint = $("modelSelect").value;
     if (!checkpoint) {
       toast("Select a model checkpoint", "error");
@@ -974,6 +997,171 @@
       $("testPill").className = "status-pill failed";
     }
   };
+
+  function showLiveStage() {
+    $("testEmpty").classList.add("hidden");
+    $("testActive").classList.remove("hidden");
+    $("resultStack").classList.add("hidden");
+    $("liveStack").classList.remove("hidden");
+    $("btnDownloadResult").classList.add("hidden");
+  }
+
+  function drawLiveOverlay() {
+    const video = $("liveVideo");
+    const canvas = $("liveOverlay");
+    const wrap = canvas.parentElement.getBoundingClientRect();
+    const ctxLive = canvas.getContext("2d");
+    canvas.width = wrap.width * devicePixelRatio;
+    canvas.height = wrap.height * devicePixelRatio;
+    canvas.style.width = `${wrap.width}px`;
+    canvas.style.height = `${wrap.height}px`;
+    ctxLive.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    ctxLive.clearRect(0, 0, wrap.width, wrap.height);
+    const vw = video.videoWidth || 1;
+    const vh = video.videoHeight || 1;
+    const scale = Math.min(wrap.width / vw, wrap.height / vh);
+    const dw = vw * scale;
+    const dh = vh * scale;
+    const ox = (wrap.width - dw) / 2;
+    const oy = (wrap.height - dh) / 2;
+    (testState.lastPersons || []).forEach((p, i) => {
+      const [x1, y1, x2, y2] = p.bbox || [0, 0, 0, 0];
+      const x = ox + (x1 / vw) * dw;
+      const y = oy + (y1 / vh) * dh;
+      const w = ((x2 - x1) / vw) * dw;
+      const h = ((y2 - y1) / vh) * dh;
+      ctxLive.strokeStyle = "#0f766e";
+      ctxLive.lineWidth = 2;
+      ctxLive.strokeRect(x, y, w, h);
+      const text = `P${p.id ?? i}: ${p.label || "unknown"} ${((p.score || 0) * 100).toFixed(0)}%`;
+      ctxLive.font = "600 13px IBM Plex Sans, sans-serif";
+      const tw = ctxLive.measureText(text).width;
+      ctxLive.fillStyle = "#0f766e";
+      ctxLive.fillRect(x, Math.max(0, y - 20), tw + 10, 20);
+      ctxLive.fillStyle = "#fff";
+      ctxLive.fillText(text, x + 5, Math.max(14, y - 5));
+    });
+  }
+
+  function captureLiveJpeg() {
+    const video = $("liveVideo");
+    if (!video.videoWidth) return Promise.resolve(null);
+    const maxW = 640;
+    const scale = Math.min(1, maxW / video.videoWidth);
+    const w = Math.round(video.videoWidth * scale);
+    const h = Math.round(video.videoHeight * scale);
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    c.getContext("2d").drawImage(video, 0, 0, w, h);
+    return new Promise((resolve) => c.toBlob((b) => resolve(b), "image/jpeg", 0.7));
+  }
+
+  async function liveLoop() {
+    const CLIP = 16;
+    while (testState.cameraOn) {
+      const checkpoint = $("modelSelect").value;
+      if (!checkpoint) {
+        toast("Select a model checkpoint", "error");
+        stopCamera();
+        break;
+      }
+      const blobs = [];
+      for (let i = 0; i < CLIP && testState.cameraOn; i++) {
+        const blob = await captureLiveJpeg();
+        if (blob) blobs.push(blob);
+        await new Promise((r) => setTimeout(r, 80));
+      }
+      if (!testState.cameraOn || blobs.length < 5) continue;
+      const fd = new FormData();
+      fd.append("checkpoint", checkpoint);
+      blobs.forEach((b, i) => fd.append("frames", b, `f${i}.jpg`));
+      $("testPill").textContent = "live";
+      $("testPill").className = "status-pill running";
+      $("testLog").textContent = `Sending ${blobs.length} frames…`;
+      try {
+        const data = await api("/api/test/live", { method: "POST", body: fd });
+        testState.lastPersons = data.persons || [];
+        drawLiveOverlay();
+        const body = $("predBody");
+        body.innerHTML = "";
+        if (!testState.lastPersons.length) {
+          body.innerHTML = '<tr><td colspan="5">No persons detected</td></tr>';
+        } else {
+          testState.lastPersons.forEach((p) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+              <td>P${p.id}</td>
+              <td>${p.posture || "—"}</td>
+              <td>${p.activity || "—"}</td>
+              <td>${((p.score || 0) * 100).toFixed(1)}%</td>
+              <td>${p.frames}</td>`;
+            body.appendChild(tr);
+          });
+        }
+        $("testLog").textContent = `${testState.lastPersons.length} person(s) · last clip ${blobs.length} frames`;
+      } catch (err) {
+        $("testLog").textContent = err.message || "Live inference failed";
+        $("testPill").textContent = "failed";
+        $("testPill").className = "status-pill failed";
+      }
+    }
+  }
+
+  async function startCamera() {
+    const checkpoint = $("modelSelect").value;
+    if (!checkpoint) {
+      toast("Select a model checkpoint", "error");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false,
+      });
+      testState.stream = stream;
+      testState.cameraOn = true;
+      testState.lastPersons = [];
+      showLiveStage();
+      const live = $("liveVideo");
+      live.srcObject = stream;
+      await live.play().catch(() => {});
+      $("btnStartCam").classList.add("hidden");
+      $("btnStopCam").classList.remove("hidden");
+      $("testPill").textContent = "live";
+      $("testPill").className = "status-pill running";
+      $("testLog").textContent = "Camera on — loading models on first clip…";
+      toast("Camera started", "ok");
+      liveLoop();
+    } catch (err) {
+      toast(err.message || "Could not open camera", "error");
+    }
+  }
+
+  function stopCamera() {
+    testState.cameraOn = false;
+    if (testState.stream) {
+      testState.stream.getTracks().forEach((t) => t.stop());
+      testState.stream = null;
+    }
+    const live = $("liveVideo");
+    if (live) live.srcObject = null;
+    $("btnStartCam")?.classList.remove("hidden");
+    $("btnStopCam")?.classList.add("hidden");
+    if ($("testPill") && $("testPill").textContent === "live") {
+      $("testPill").textContent = "idle";
+      $("testPill").className = "status-pill";
+    }
+  }
+
+  $("btnStartCam").onclick = () => startCamera();
+  $("btnStopCam").onclick = () => {
+    stopCamera();
+    toast("Camera stopped", "ok");
+  };
+  window.addEventListener("resize", () => {
+    if (testState.cameraOn) drawLiveOverlay();
+  });
 
   async function init() {
     try {

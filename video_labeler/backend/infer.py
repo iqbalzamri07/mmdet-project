@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -291,6 +292,99 @@ def _classify_crops(
             os.remove(tmp_path)
         torch.cuda.empty_cache()
         gc.collect()
+
+
+_live_lock = threading.Lock()
+_live_bundle: Dict[str, Any] = {}
+
+
+def _get_live_models(checkpoint_path: Path) -> Dict[str, Any]:
+    """Load detector + SlowFast once and reuse for camera clips."""
+    global _live_bundle
+    ckpt = str(checkpoint_path.resolve())
+    if _live_bundle.get("checkpoint") == ckpt and _live_bundle.get("action_model") is not None:
+        return _live_bundle
+
+    from mmengine.config import Config
+    from mmaction.apis import init_recognizer
+    from mmdet.apis import init_detector
+    from mmengine import init_default_scope
+
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:64,expandable_segments:True")
+    labels, postures, activities = _load_label_taxonomy()
+    device_action = "cuda:0" if torch.cuda.is_available() else "cpu"
+    cfg = Config.fromfile(str(ACTION_CONFIG))
+    if hasattr(cfg, "model") and "cls_head" in cfg.model:
+        cfg.model["cls_head"]["num_classes"] = len(labels)
+    action_model = init_recognizer(cfg, ckpt, device=device_action)
+    action_model.eval()
+    init_default_scope("mmdet")
+    det_model = init_detector(str(DET_CONFIG), str(DET_CHECKPOINT), device="cpu")
+    _live_bundle = {
+        "checkpoint": ckpt,
+        "action_model": action_model,
+        "det_model": det_model,
+        "labels": labels,
+        "postures": postures,
+        "activities": activities,
+        "multi_label": _cfg_is_multilabel(cfg),
+        "device": device_action,
+    }
+    return _live_bundle
+
+
+def run_live_clip(frames: List[np.ndarray], checkpoint_path: Path) -> Dict[str, Any]:
+    """Detect people on the last frame and classify a SlowFast clip per person."""
+    if not frames:
+        return {"ok": False, "error": "No frames", "persons": []}
+    if not checkpoint_path.exists():
+        return {"ok": False, "error": f"Checkpoint not found: {checkpoint_path.name}", "persons": []}
+    if not DET_CHECKPOINT.exists():
+        return {"ok": False, "error": f"Detector missing: {DET_CHECKPOINT}", "persons": []}
+
+    with _live_lock:
+        bundle = _get_live_models(checkpoint_path)
+        last = frames[-1]
+        boxes = _detect_persons(bundle["det_model"], last)
+        persons = []
+        for i, (x1, y1, x2, y2) in enumerate(boxes):
+            crops = []
+            for frame in frames:
+                h, w = frame.shape[:2]
+                xa, ya = max(0, x1), max(0, y1)
+                xb, yb = min(w, x2), min(h, y2)
+                if xb <= xa or yb <= ya:
+                    continue
+                crops.append(frame[ya:yb, xa:xb])
+            pred = _classify_crops(
+                bundle["action_model"],
+                crops,
+                bundle["labels"],
+                bundle["postures"],
+                bundle["activities"],
+                bundle["multi_label"],
+            )
+            persons.append(
+                {
+                    "id": i,
+                    "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                    "label": pred.get("label") or "unknown",
+                    "posture": pred.get("posture") or "",
+                    "activity": pred.get("activity") or "",
+                    "score": pred.get("score", 0),
+                    "posture_score": pred.get("posture_score", 0),
+                    "activity_score": pred.get("activity_score", 0),
+                    "frames": len(crops),
+                }
+            )
+    h, w = frames[-1].shape[:2]
+    return {
+        "ok": True,
+        "width": int(w),
+        "height": int(h),
+        "persons": persons,
+        "checkpoint": checkpoint_path.name,
+    }
 
 
 def _to_h264(src: Path, dest: Path) -> Path:

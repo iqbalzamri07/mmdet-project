@@ -180,6 +180,16 @@
 
         <section class="panel">
           <div class="panel-head">
+            <h2>Source</h2>
+          </div>
+          <div class="source-tabs">
+            <button type="button" class="mode-tab active" id="srcVideo">Video file</button>
+            <button type="button" class="mode-tab" id="srcCamera">Camera</button>
+          </div>
+        </section>
+
+        <section class="panel" id="panelTestVideo">
+          <div class="panel-head">
             <h2>Test video</h2>
           </div>
           <label class="btn btn-primary file-btn btn-block">
@@ -190,6 +200,15 @@
           <button class="btn btn-accent btn-block" id="btnRunTest" type="button">
             Run inference
           </button>
+        </section>
+
+        <section class="panel hidden" id="panelTestCamera">
+          <div class="panel-head">
+            <h2>Camera</h2>
+          </div>
+          <button class="btn btn-primary btn-block" id="btnStartCam" type="button">Start camera</button>
+          <button class="btn btn-ghost btn-block hidden" id="btnStopCam" type="button">Stop camera</button>
+          <p class="hint">Uses your webcam. First run loads models and can take a minute.</p>
         </section>
 
         <section class="panel">
@@ -205,14 +224,18 @@
         <div class="stage" id="testEmpty">
           <div class="empty-state">
             <h2>Test your trained model</h2>
-            <p>Select a checkpoint, upload a video, then run inference. Results show person boxes with action labels.</p>
+            <p>Select a checkpoint, then upload a video or start the camera. Results show person boxes with posture and activity.</p>
           </div>
         </div>
 
         <div class="stage hidden" id="testActive">
           <div class="player-wrap">
-            <div class="canvas-stack result-stack">
+            <div class="canvas-stack result-stack hidden" id="resultStack">
               <video id="resultVideo" controls playsinline></video>
+            </div>
+            <div class="canvas-stack result-stack hidden" id="liveStack">
+              <video id="liveVideo" autoplay muted playsinline></video>
+              <canvas id="liveOverlay"></canvas>
             </div>
           </div>
           <div class="segments-panel">

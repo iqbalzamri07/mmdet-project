@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import cv2
+import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -32,6 +33,7 @@ from .infer import (
     get_test_job,
     list_checkpoints,
     list_test_jobs,
+    run_live_clip,
     start_inference_job,
 )
 from .train_runner import get_active_job, get_job, list_jobs, start_training, stop_training
@@ -653,6 +655,32 @@ async def test_run(
 
     result = start_inference_job(video_path, ckpt)
     return result
+
+
+@app.post("/api/test/live")
+async def test_live(
+    checkpoint: str = Form(...),
+    frames: List[UploadFile] = File(...),
+):
+    """Classify a short webcam clip (JPEG frames) with person boxes + posture/activity."""
+    ckpt = config.WORK_DIR / checkpoint
+    if not ckpt.exists():
+        raise HTTPException(404, f"Checkpoint not found: {checkpoint}")
+    decoded: List[Any] = []
+    for item in frames:
+        raw = await item.read()
+        if not raw:
+            continue
+        arr = np.frombuffer(raw, dtype=np.uint8)
+        img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is not None:
+            decoded.append(img)
+    if len(decoded) < 5:
+        raise HTTPException(400, "Need at least 5 camera frames")
+    try:
+        return run_live_clip(decoded, ckpt)
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
 
 
 @app.get("/api/test/status")
