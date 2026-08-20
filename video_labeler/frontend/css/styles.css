@@ -207,6 +207,7 @@ html, body {
   width: 100%;
   justify-content: center;
   margin-top: 10px;
+  margin-bottom: 10px;
 }
 .file-btn.btn-block { margin-top: 0; }
 
