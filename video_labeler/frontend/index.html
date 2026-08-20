@@ -28,22 +28,64 @@
 
     <!-- LABEL MODE -->
     <main class="layout layout-label" id="modeLabel">
-      <aside class="sidebar">
-        <section class="panel">
-          <div class="panel-head">
-            <h2>Dataset</h2>
+      <aside class="nav-rail">
+        <nav class="nav-tabs" aria-label="Sidebar">
+          <button type="button" class="nav-tab active" id="navTabVideos">Videos</button>
+          <button type="button" class="nav-tab" id="navTabDataset">Dataset</button>
+          <button type="button" class="nav-tab" id="navTabClasses">Classes</button>
+        </nav>
+
+        <div class="nav-panel active" id="navPanelVideos">
+          <div class="nav-panel-toolbar">
+            <span class="count-total" id="libraryCount">0 videos</span>
+            <button class="linkish" id="btnRefresh" type="button">Refresh</button>
           </div>
+          <input
+            id="videoSearch"
+            class="video-search"
+            type="search"
+            placeholder="Search videos…"
+            autocomplete="off"
+          />
+          <div class="library-tabs" role="tablist">
+            <button type="button" class="library-tab active" id="libTabNeed" role="tab">Need</button>
+            <button type="button" class="library-tab" id="libTabHas" role="tab">Done</button>
+          </div>
+          <div class="library-body" id="libraryBody">
+            <div class="library-tab-panel active" id="libraryPanelNeed" role="tabpanel">
+              <p class="library-tab-count" id="needLabelsTitle">0 videos</p>
+              <ul class="video-list" id="videoListNeed"></ul>
+            </div>
+            <div class="library-tab-panel" id="libraryPanelHas" role="tabpanel" hidden>
+              <p class="library-tab-count" id="hasSegmentsTitle">0 videos</p>
+              <ul class="video-list" id="videoListHas"></ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="nav-panel" id="navPanelDataset" hidden>
+          <p class="nav-panel-desc">Export labeled clips and train SlowFast.</p>
           <label class="btn btn-primary file-btn btn-block">
             Upload videos
             <input type="file" id="fileInput" accept="video/*" multiple hidden />
           </label>
-          <button class="btn btn-ghost btn-block" id="btnExport" type="button">Export dataset</button>
-          <button class="btn btn-accent btn-block" id="btnTrain" type="button">Train model</button>
-        </section>
+          <div class="btn-row">
+            <button class="btn btn-ghost" id="btnExport" type="button">Export</button>
+            <button class="btn btn-accent" id="btnTrain" type="button">Train</button>
+          </div>
+          <div class="nav-panel-section">
+            <div class="panel-head">
+              <h2>Training log</h2>
+              <span class="status-pill" id="trainPill">idle</span>
+            </div>
+            <pre class="train-log" id="trainLog">No job running.</pre>
+            <button class="btn btn-ghost btn-small btn-block" id="btnStopTrain" type="button" hidden>Stop</button>
+          </div>
+        </div>
 
-        <section class="panel classes-panel">
+        <div class="nav-panel" id="navPanelClasses" hidden>
           <div class="panel-head">
-            <h2>Classes</h2>
+            <h2>Taxonomy</h2>
             <div class="panel-head-actions">
               <span class="count-total" id="classCountTotal">0 total</span>
               <button class="btn btn-small btn-ghost" id="btnEditLabels" type="button">Edit</button>
@@ -51,27 +93,17 @@
           </div>
           <div class="label-chips" id="labelChips"></div>
           <div class="label-edit">
-            <input id="newLabelInput" type="text" placeholder="Add activity (e.g. drinking)" />
+            <input id="newLabelInput" type="text" placeholder="New activity…" />
             <button class="btn btn-small btn-primary" id="btnAddLabel" type="button">Add</button>
           </div>
-        </section>
-
-        <section class="panel train-panel">
-          <div class="panel-head">
-            <h2>Training</h2>
-            <span class="status-pill" id="trainPill">idle</span>
-          </div>
-          <pre class="train-log" id="trainLog">No job running.</pre>
-          <button class="btn btn-ghost btn-small" id="btnStopTrain" type="button" hidden>Stop</button>
-        </section>
+        </div>
       </aside>
 
-      <section class="workspace workspace-label">
-        <div class="workspace-main">
+      <section class="center-stage">
         <div class="stage stage-fill" id="stageEmpty">
           <div class="empty-state">
-            <h2>Upload a video to start labeling</h2>
-            <p>Pick posture (sitting/standing) plus an optional activity, mark start/end, optionally crop the person, then export and train.</p>
+            <h2>Select a video</h2>
+            <p>Pick a video from the list on the left, then use the Annotate panel on the right to mark segments.</p>
           </div>
         </div>
 
@@ -82,91 +114,84 @@
                 <video id="video" playsinline></video>
                 <canvas id="overlay"></canvas>
               </div>
-              <div class="transport">
-                <button class="icon-btn" id="btnPlay" type="button" title="Play/Pause">▶</button>
-                <button class="icon-btn" id="btnPrev" type="button" title="Prev frame">‹</button>
-                <button class="icon-btn" id="btnNext" type="button" title="Next frame">›</button>
-                <input type="range" id="seek" min="0" max="1000" value="0" />
+            </div>
+            <div class="player-chrome">
+              <div class="transport-bar">
+                <div class="transport-controls">
+                  <button class="icon-btn" id="btnPlay" type="button" title="Play/Pause (Space)">▶</button>
+                  <button class="icon-btn" id="btnPrev" type="button" title="Previous frame (←)">‹</button>
+                  <button class="icon-btn" id="btnNext" type="button" title="Next frame (→)">›</button>
+                </div>
                 <div class="timecode" id="timecode">0 / 0</div>
               </div>
-              <div class="timeline-marks" id="timelineMarks"></div>
-            </div>
-
-            <div class="label-bar">
-              <div class="toolbar-group">
-                <label class="field">
-                  <span>Posture</span>
-                  <select id="postureSelect"></select>
-                </label>
-                <label class="field">
-                  <span>Activity</span>
-                  <select id="activitySelect"></select>
-                </label>
+              <div class="scrubber-track">
+                <input type="range" id="seek" min="0" max="1000" value="0" aria-label="Seek" />
+                <div class="timeline-marks" id="timelineMarks"></div>
               </div>
-              <div class="toolbar-group">
-                <button class="btn btn-ghost" id="btnMarkStart" type="button">Mark start</button>
-                <button class="btn btn-ghost" id="btnMarkEnd" type="button">Mark end</button>
-                <button class="btn btn-primary" id="btnSaveSeg" type="button">Save segment</button>
-              </div>
-              <div class="toolbar-group">
-                <button class="btn btn-ghost" id="btnToggleCrop" type="button">Draw crop</button>
-                <button class="btn btn-ghost" id="btnClearCrop" type="button">Clear crop</button>
-              </div>
-              <div class="pending" id="pendingInfo">Start: — · End: —</div>
             </div>
           </div>
+        </div>
+      </section>
 
-          <div class="segments-panel hidden" id="segmentsPanel">
-            <div class="panel-head">
-              <h2>Segments</h2>
-              <button class="btn btn-small btn-primary" id="btnSaveAll" type="button">Save annotations</button>
+      <aside class="annotate-rail hidden" id="segmentsPanel">
+        <header class="annotate-head">
+          <h2>Annotate</h2>
+        </header>
+        <div class="segments-body" id="segmentsBody">
+          <section class="annotate-block">
+            <h3 class="block-label">Labels</h3>
+            <div class="field-grid">
+              <label class="field">
+                <span>Posture</span>
+                <select id="postureSelect"></select>
+              </label>
+              <label class="field">
+                <span>Activity</span>
+                <select id="activitySelect"></select>
+              </label>
+            </div>
+          </section>
+
+          <section class="annotate-block">
+            <h3 class="block-label">Segment range</h3>
+            <div class="btn-row">
+              <button class="btn btn-ghost" id="btnMarkStart" type="button">Mark start</button>
+              <button class="btn btn-ghost" id="btnMarkEnd" type="button">Mark end</button>
+            </div>
+            <div class="pending" id="pendingInfo">Start: — · End: —</div>
+            <button class="btn btn-primary btn-block" id="btnSaveSeg" type="button">Save segment</button>
+          </section>
+
+          <section class="annotate-block">
+            <h3 class="block-label">Person crop</h3>
+            <div class="btn-row">
+              <button class="btn btn-ghost" id="btnToggleCrop" type="button">Draw crop</button>
+              <button class="btn btn-ghost" id="btnClearCrop" type="button">Clear</button>
+            </div>
+          </section>
+
+          <section class="annotate-block annotate-block-fill">
+            <div class="block-head">
+              <h3 class="block-label">Saved segments</h3>
+              <button class="btn btn-small btn-ghost" id="btnSaveAll" type="button">Save all</button>
             </div>
             <div class="seg-table-wrap">
-              <table class="seg-table">
+              <table class="seg-table seg-table-rail">
                 <thead>
                   <tr>
                     <th>Posture</th>
                     <th>Activity</th>
-                    <th>Start</th>
-                    <th>End</th>
-                    <th>Crop</th>
+                    <th>In</th>
+                    <th>Out</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody id="segBody"></tbody>
               </table>
             </div>
-          </div>
+          </section>
         </div>
-        </div>
-
-        <section class="panel library-panel library-dock">
-          <div class="panel-head">
-            <h2>Library</h2>
-            <div class="panel-head-actions">
-              <span class="count-total" id="libraryCount">0 videos</span>
-              <button class="linkish" id="btnRefresh" type="button">Refresh</button>
-            </div>
-          </div>
-          <input
-            id="videoSearch"
-            class="video-search"
-            type="search"
-            placeholder="Search videos…"
-            autocomplete="off"
-          />
-          <div class="library-columns">
-            <div class="library-col">
-              <h3 class="video-group-title" id="needLabelsTitle">Need segments (0)</h3>
-              <ul class="video-list" id="videoListNeed"></ul>
-            </div>
-            <div class="library-col">
-              <h3 class="video-group-title" id="hasSegmentsTitle">Has segments (0)</h3>
-              <ul class="video-list" id="videoListHas"></ul>
-            </div>
-          </div>
-        </section>
-      </section>
+      </aside>
     </main>
 
     <!-- TEST MODE -->

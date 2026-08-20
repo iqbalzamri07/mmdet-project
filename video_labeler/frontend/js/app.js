@@ -228,8 +228,12 @@
     }
     const needTitle = $("needLabelsTitle");
     const hasTitle = $("hasSegmentsTitle");
-    if (needTitle) needTitle.textContent = `Need segments (${needTotal})`;
-    if (hasTitle) hasTitle.textContent = `Has segments (${hasTotal})`;
+    if (needTitle) needTitle.textContent = `${needTotal} video${needTotal === 1 ? "" : "s"}`;
+    if (hasTitle) hasTitle.textContent = `${hasTotal} video${hasTotal === 1 ? "" : "s"}`;
+    const libTabNeed = $("libTabNeed");
+    const libTabHas = $("libTabHas");
+    if (libTabNeed) libTabNeed.textContent = `Need segments (${needTotal})`;
+    if (libTabHas) libTabHas.textContent = `Has segments (${hasTotal})`;
 
     needList.innerHTML = "";
     hasList.innerHTML = "";
@@ -239,6 +243,7 @@
 
     if (!needVideos.length && !hasVideos.length && !total_all) {
       needList.innerHTML = '<li class="meta">No videos yet</li>';
+      hasList.innerHTML = "";
       return;
     }
     if (!needVideos.length) {
@@ -288,6 +293,7 @@
         $("stageActive").classList.add("hidden");
         $("stageEmpty").classList.remove("hidden");
         $("segmentsPanel").classList.add("hidden");
+        $("modeLabel")?.classList.remove("segments-open");
       }
       await loadVideos();
       await loadLabelCounts();
@@ -307,7 +313,6 @@
         <td>${seg.activity || "—"}</td>
         <td>${seg.start_frame}</td>
         <td>${seg.end_frame}</td>
-        <td>${seg.bbox ? "yes" : "—"}</td>
         <td><button type="button" data-idx="${idx}">Delete</button></td>`;
       tr.querySelector("button").onclick = () => {
         state.segments.splice(idx, 1);
@@ -359,6 +364,14 @@
       if (!$("stageActive").classList.contains("hidden")) resizeOverlay();
       if (testState.cameraOn) drawLiveOverlay();
     });
+  }
+
+  function updateLabelLayout() {
+    const layout = $("modeLabel");
+    const panel = $("segmentsPanel");
+    if (!layout || !panel) return;
+    layout.classList.toggle("segments-open", !panel.classList.contains("hidden"));
+    relayoutPlayers();
   }
 
   function videoDisplayRect() {
@@ -474,6 +487,7 @@
     $("stageEmpty").classList.add("hidden");
     $("stageActive").classList.remove("hidden");
     $("segmentsPanel").classList.remove("hidden");
+    updateLabelLayout();
     renderVideoList();
 
     const meta = await api(`/api/videos/${id}/meta`);
@@ -548,6 +562,7 @@
       await loadVideos();
       const lastNew = uploaded[uploaded.length - 1];
       if (lastNew?.video) {
+        setNavTab("videos");
         await selectVideo(lastNew.video.id);
       }
     } catch (err) {
@@ -575,6 +590,39 @@
   });
 
   $("btnRefresh").onclick = () => loadVideos().catch((e) => toast(e.message, "error"));
+
+  function setNavTab(tab) {
+    const tabs = { videos: "navTabVideos", dataset: "navTabDataset", classes: "navTabClasses" };
+    const panels = { videos: "navPanelVideos", dataset: "navPanelDataset", classes: "navPanelClasses" };
+    Object.entries(tabs).forEach(([key, btnId]) => {
+      const active = key === tab;
+      $(btnId)?.classList.toggle("active", active);
+      const panel = $(panels[key]);
+      if (panel) {
+        panel.hidden = !active;
+        panel.classList.toggle("active", active);
+      }
+    });
+  }
+
+  $("navTabVideos")?.addEventListener("click", () => setNavTab("videos"));
+  $("navTabDataset")?.addEventListener("click", () => setNavTab("dataset"));
+  $("navTabClasses")?.addEventListener("click", () => setNavTab("classes"));
+
+  function setLibraryTab(tab) {
+    const isNeed = tab === "need";
+    $("libTabNeed")?.classList.toggle("active", isNeed);
+    $("libTabHas")?.classList.toggle("active", !isNeed);
+    $("libTabNeed")?.setAttribute("aria-selected", isNeed ? "true" : "false");
+    $("libTabHas")?.setAttribute("aria-selected", !isNeed ? "true" : "false");
+    $("libraryPanelNeed")?.classList.toggle("active", isNeed);
+    $("libraryPanelHas")?.classList.toggle("active", !isNeed);
+    if ($("libraryPanelNeed")) $("libraryPanelNeed").hidden = !isNeed;
+    if ($("libraryPanelHas")) $("libraryPanelHas").hidden = isNeed;
+  }
+
+  $("libTabNeed")?.addEventListener("click", () => setLibraryTab("need"));
+  $("libTabHas")?.addEventListener("click", () => setLibraryTab("has"));
 
   let _searchTimer = null;
   $("videoSearch").addEventListener("input", (e) => {
@@ -697,8 +745,9 @@
 
   $("btnToggleCrop").onclick = () => {
     state.cropMode = !state.cropMode;
-    $("btnToggleCrop").textContent = state.cropMode ? "Crop: ON" : "Draw crop";
-    $("btnToggleCrop").classList.toggle("btn-primary", state.cropMode);
+    const btn = $("btnToggleCrop");
+    btn.classList.toggle("is-active", state.cropMode);
+    btn.setAttribute("aria-pressed", state.cropMode ? "true" : "false");
     overlay.classList.toggle("crop-on", state.cropMode);
     toast(state.cropMode ? "Drag on video to draw crop box" : "Crop mode off");
   };
