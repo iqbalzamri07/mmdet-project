@@ -652,6 +652,15 @@ def test_result_video(job_id: str):
     return FileResponse(path, media_type="video/mp4", filename=path.name)
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+@app.get("/favicon.svg", include_in_schema=False)
+def favicon():
+    path = FRONTEND_DIR / "favicon.svg"
+    if not path.exists():
+        raise HTTPException(404, "favicon not found")
+    return FileResponse(path, media_type="image/svg+xml")
+
+
 # Serve frontend last
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

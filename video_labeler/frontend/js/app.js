@@ -182,14 +182,14 @@
     if (countEl) {
       const q = (state.videoQuery || "").trim();
       if (q) {
-        countEl.textContent = `${needTotal + hasTotal} results · ${total_all} total · ${total_labeled} labeled`;
+        countEl.textContent = `${needTotal + hasTotal} results · ${total_all} total · ${total_labeled} with segments`;
       } else {
-        countEl.textContent = `${total_all} video${total_all === 1 ? "" : "s"} · ${total_labeled} labeled`;
+        countEl.textContent = `${total_all} video${total_all === 1 ? "" : "s"} · ${total_labeled} with segments`;
       }
     }
     const needTitle = $("needLabelsTitle");
     const hasTitle = $("hasSegmentsTitle");
-    if (needTitle) needTitle.textContent = `Need labels (${needTotal})`;
+    if (needTitle) needTitle.textContent = `Need segments (${needTotal})`;
     if (hasTitle) hasTitle.textContent = `Has segments (${hasTotal})`;
 
     needList.innerHTML = "";
