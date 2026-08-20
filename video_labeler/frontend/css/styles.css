@@ -376,6 +376,46 @@ html, body {
   color: #9f2d1f;
 }
 
+.annotate-rail .annotate-meta {
+  margin: 0;
+  padding: 0 14px 8px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.annotate-log-block {
+  flex-shrink: 0;
+  max-height: 120px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.annotate-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.annotate-log li {
+  padding: 4px 0;
+  border-bottom: 1px solid #eef2f5;
+}
+
+.annotate-log li:last-child {
+  border-bottom: 0;
+}
+
+.annotate-log .log-who {
+  font-weight: 600;
+  color: var(--ink);
+}
+
 #navPanelClasses .label-chips {
   flex: 1;
   min-height: 0;

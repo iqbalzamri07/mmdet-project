@@ -86,6 +86,7 @@ class AnnotationPayload(BaseModel):
     total_frames: int = 0
     duration: float = 0.0
     segments: List[Segment] = []
+    annotator: Optional[str] = ""
 
 
 class ExportRequest(BaseModel):
@@ -245,6 +246,8 @@ def _rebuild_video_index() -> List[Dict[str, Any]]:
             "id": stem,
             "filename": path.name,
             "segments": len(ann.get("segments", [])) if ann else 0,
+            "last_annotator": (ann or {}).get("last_annotator") or "",
+            "updated_at": (ann or {}).get("updated_at") or "",
             **meta,
         })
     _video_index_cache = index
@@ -523,6 +526,9 @@ def get_video_meta(video_id: str):
         "filename": matches[0].name,
         **meta,
         "segments": ann.get("segments", []),
+        "last_annotator": ann.get("last_annotator") or "",
+        "updated_at": ann.get("updated_at") or "",
+        "annotation_log": ann.get("annotation_log") or [],
     }
 
 
@@ -548,8 +554,24 @@ def put_annotation(video_id: str, payload: AnnotationPayload):
         # Keep a display label for older tools
         if not seg.label:
             seg.label = " + ".join(names)
-    data = payload.model_dump()
-    data["video_id"] = video_id
+    data = payload.model_dump(exclude={"annotator"})
+    annotator = (payload.annotator or "").strip() or "Annotator"
+    existing = load_annotation(video_id) or {}
+    now = datetime.utcnow().isoformat() + "Z"
+    log = list(existing.get("annotation_log") or [])
+    log.append(
+        {
+            "at": now,
+            "annotator": annotator,
+            "segments": len(payload.segments),
+        }
+    )
+    data["last_annotator"] = annotator
+    data["annotation_log"] = log[-50:]
+    if existing.get("created_at"):
+        data["created_at"] = existing["created_at"]
+    elif not data.get("created_at"):
+        data["created_at"] = now
     path = save_annotation(video_id, data)
     _get_video_index(force=True)
     rev = bump_library_revision()

@@ -211,12 +211,17 @@
       const mine = lock.client_id === state.clientId;
       lockHtml = `<div class="lock-badge ${mine ? "mine" : ""}">${mine ? "You are editing" : `Locked by ${lock.name || "someone"}`}</div>`;
     }
+    let annotatorLine = "";
+    if (v.segments > 0 && v.last_annotator) {
+      annotatorLine = `<div class="meta">Saved by ${v.last_annotator}${v.updated_at ? ` · ${formatAnnotateTime(v.updated_at)}` : ""}</div>`;
+    }
     li.innerHTML = `
       <div class="video-row">
         <span class="video-num">${index}</span>
         <div class="video-info">
           <div class="name" title="${v.filename}">${v.filename}</div>
           <div class="meta">${Math.round(v.duration || 0)}s · ${v.segments || 0} segments · ${v.total_frames || 0} frames</div>
+          ${annotatorLine}
           ${lockHtml}
         </div>
         <button type="button" class="btn-delete-video" title="Delete video" aria-label="Delete ${v.filename}">×</button>
@@ -539,6 +544,59 @@
     return raw || "Annotator";
   }
 
+  function persistCollabName() {
+    const name = ($("collabName")?.value || "").trim();
+    state.collabName = name;
+    localStorage.setItem("actionmark_name", name);
+  }
+
+  function formatAnnotateTime(iso) {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso.slice(0, 16).replace("T", " ");
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function renderAnnotateMeta(meta) {
+    const el = $("annotateMeta");
+    const logEl = $("annotateLog");
+    if (!el) return;
+    if (!meta) {
+      el.textContent = "Select a video to annotate.";
+      if (logEl) logEl.innerHTML = "";
+      return;
+    }
+    const who = meta.last_annotator || "";
+    const when = meta.updated_at || "";
+    if (who && when) {
+      el.textContent = `Last saved by ${who} · ${formatAnnotateTime(when)}`;
+    } else if (who) {
+      el.textContent = `Last saved by ${who}`;
+    } else if ((meta.segments || []).length) {
+      el.textContent = "Saved (annotator not recorded yet — save again with your name set)";
+    } else {
+      el.textContent = "No segments saved yet.";
+    }
+    if (logEl) {
+      const log = [...(meta.annotation_log || [])].reverse().slice(0, 8);
+      if (!log.length) {
+        logEl.innerHTML = '<li>No save history yet.</li>';
+      } else {
+        logEl.innerHTML = log
+          .map(
+            (entry) =>
+              `<li><span class="log-who">${entry.annotator || "Annotator"}</span> · ${entry.segments ?? 0} seg · ${formatAnnotateTime(entry.at)}</li>`
+          )
+          .join("");
+      }
+    }
+  }
+
   function updateLockPill() {
     const pill = $("lockPill");
     if (!pill) return;
@@ -704,6 +762,7 @@
     const meta = await api(`/api/videos/${id}/meta`);
     state.meta = meta;
     state.segments = (meta.segments || []).map((s) => normalizeSeg(s));
+    renderAnnotateMeta(meta);
     videoEl.onerror = async () => {
       toast("Video codec not supported in browser — converting to H.264…", "error");
       try {
@@ -730,6 +789,8 @@
 
   async function saveAnnotations() {
     if (!state.videoId || !state.meta) return;
+    persistCollabName();
+    const annotator = collabDisplayName();
     const payload = {
       filename: state.meta.filename,
       fps: state.meta.fps,
@@ -738,6 +799,7 @@
       total_frames: state.meta.total_frames,
       duration: state.meta.duration,
       segments: state.segments,
+      annotator,
     };
     const data = await api(`/api/annotations/${state.videoId}`, {
       method: "PUT",
@@ -747,9 +809,12 @@
     if (typeof data.revision === "number") {
       state.libraryRevision = data.revision;
     }
+    const fresh = await api(`/api/videos/${state.videoId}/meta`);
+    state.meta = { ...state.meta, ...fresh };
+    renderAnnotateMeta(state.meta);
     await loadVideos();
     await loadLabelCounts();
-    toast("Annotations saved", "ok");
+    toast(`Saved by ${annotator}`, "ok");
   }
 
   // --- Events ---
@@ -1654,10 +1719,10 @@
       const nameInput = $("collabName");
       if (nameInput) {
         nameInput.value = state.collabName || "";
-        nameInput.addEventListener("change", () => {
-          state.collabName = nameInput.value.trim();
-          localStorage.setItem("actionmark_name", state.collabName);
+        nameInput.addEventListener("input", () => {
+          persistCollabName();
         });
+        nameInput.addEventListener("change", persistCollabName);
       }
       await ensureCollabClient();
       await loadLabels();
