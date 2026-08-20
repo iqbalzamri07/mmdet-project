@@ -24,13 +24,15 @@
         <button type="button" class="mode-tab active" data-mode="label" id="tabLabel">Label</button>
         <button type="button" class="mode-tab" data-mode="test" id="tabTest">Test</button>
       </nav>
-      <div class="top-actions" id="labelActions">
-        <label class="btn btn-primary file-btn">
-          Upload videos
-          <input type="file" id="fileInput" accept="video/*" multiple hidden />
-        </label>
-        <button class="btn btn-ghost" id="btnExport" type="button">Export dataset</button>
-        <button class="btn btn-accent" id="btnTrain" type="button">Train model</button>
+      <div class="top-actions">
+        <div class="top-actions-group" id="labelActions">
+          <label class="btn btn-primary file-btn">
+            Upload videos
+            <input type="file" id="fileInput" accept="video/*" multiple hidden />
+          </label>
+          <button class="btn btn-ghost" id="btnExport" type="button">Export dataset</button>
+          <button class="btn btn-accent" id="btnTrain" type="button">Train model</button>
+        </div>
       </div>
     </header>
 
@@ -87,19 +89,25 @@
           </div>
 
           <div class="label-bar">
-            <label class="field">
-              <span>Posture</span>
-              <select id="postureSelect"></select>
-            </label>
-            <label class="field">
-              <span>Activity</span>
-              <select id="activitySelect"></select>
-            </label>
-            <button class="btn btn-ghost" id="btnMarkStart" type="button">Mark start</button>
-            <button class="btn btn-ghost" id="btnMarkEnd" type="button">Mark end</button>
-            <button class="btn btn-primary" id="btnSaveSeg" type="button">Save segment</button>
-            <button class="btn btn-ghost" id="btnToggleCrop" type="button">Draw crop</button>
-            <button class="btn btn-ghost" id="btnClearCrop" type="button">Clear crop</button>
+            <div class="toolbar-group">
+              <label class="field">
+                <span>Posture</span>
+                <select id="postureSelect"></select>
+              </label>
+              <label class="field">
+                <span>Activity</span>
+                <select id="activitySelect"></select>
+              </label>
+            </div>
+            <div class="toolbar-group">
+              <button class="btn btn-ghost" id="btnMarkStart" type="button">Mark start</button>
+              <button class="btn btn-ghost" id="btnMarkEnd" type="button">Mark end</button>
+              <button class="btn btn-primary" id="btnSaveSeg" type="button">Save segment</button>
+            </div>
+            <div class="toolbar-group">
+              <button class="btn btn-ghost" id="btnToggleCrop" type="button">Draw crop</button>
+              <button class="btn btn-ghost" id="btnClearCrop" type="button">Clear crop</button>
+            </div>
             <div class="pending" id="pendingInfo">Start: — · End: —</div>
           </div>
         </div>
@@ -172,12 +180,12 @@
           <div class="panel-head">
             <h2>Test video</h2>
           </div>
-          <label class="btn btn-primary file-btn" style="width:100%;justify-content:center;">
+          <label class="btn btn-primary file-btn btn-block">
             Upload test video
             <input type="file" id="testFileInput" accept="video/*" hidden />
           </label>
           <p class="hint" id="testFileName">No file selected</p>
-          <button class="btn btn-accent" id="btnRunTest" type="button" style="width:100%;margin-top:10px;">
+          <button class="btn btn-accent btn-block" id="btnRunTest" type="button">
             Run inference
           </button>
         </section>
