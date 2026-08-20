@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="ActionMark">
+  <defs>
+    <linearGradient id="am-bg" x1="8" y1="4" x2="40" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f766e"/>
+      <stop offset="58%" stop-color="#148f86"/>
+      <stop offset="100%" stop-color="#c94d32"/>
+    </linearGradient>
+    <linearGradient id="am-lens" x1="18" y1="18" x2="30" y2="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#d9f3f0"/>
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="12" fill="url(#am-bg)"/>
+  <rect x="1.5" y="1.5" width="45" height="45" rx="10.5" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="1"/>
+  <!-- viewfinder corners -->
+  <path d="M14 17h-2v2M34 17h2v2M14 31h-2v-2M34 31h2v-2" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+  <!-- camera frame -->
+  <rect x="13" y="16" width="22" height="16" rx="2.5" fill="none" stroke="#ffffff" stroke-width="2.2"/>
+  <!-- lens -->
+  <circle cx="24" cy="24" r="4.5" fill="url(#am-lens)"/>
+  <circle cx="24" cy="24" r="2.2" fill="#e05a3c"/>
+  <!-- segment marks (label timeline) -->
+  <rect x="11" y="36.5" width="9" height="3.5" rx="1.75" fill="#ffffff" fill-opacity="0.95"/>
+  <rect x="21.5" y="36.5" width="13" height="3.5" rx="1.75" fill="#ffffff" fill-opacity="0.55"/>
+  <rect x="36" y="36.5" width="5" height="3.5" rx="1.75" fill="#ffffff" fill-opacity="0.3"/>
+</svg>
