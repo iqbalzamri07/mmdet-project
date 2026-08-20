@@ -23,6 +23,12 @@
     trainJobId: null,
     pollTimer: null,
     editingClasses: false,
+    clientId: localStorage.getItem("actionmark_client_id") || "",
+    collabName: localStorage.getItem("actionmark_name") || "",
+    libraryRevision: 0,
+    locks: {}, // video_id -> { name, client_id }
+    collabPollTimer: null,
+    lockHeartbeatTimer: null,
   };
 
   const videoEl = $("video");
@@ -194,14 +200,24 @@
     }
   }
 
-  function appendVideoItem(list, v) {
+  function appendVideoItem(list, v, index) {
     const li = document.createElement("li");
     if (v.id === state.videoId) li.classList.add("active");
+    const lock = state.locks[v.id];
+    const lockedByOther = lock && lock.client_id !== state.clientId;
+    if (lockedByOther) li.classList.add("locked-by-other");
+    let lockHtml = "";
+    if (lock) {
+      const mine = lock.client_id === state.clientId;
+      lockHtml = `<div class="lock-badge ${mine ? "mine" : ""}">${mine ? "You are editing" : `Locked by ${lock.name || "someone"}`}</div>`;
+    }
     li.innerHTML = `
       <div class="video-row">
+        <span class="video-num">${index}</span>
         <div class="video-info">
           <div class="name" title="${v.filename}">${v.filename}</div>
           <div class="meta">${Math.round(v.duration || 0)}s · ${v.segments || 0} segments · ${v.total_frames || 0} frames</div>
+          ${lockHtml}
         </div>
         <button type="button" class="btn-delete-video" title="Delete video" aria-label="Delete ${v.filename}">×</button>
       </div>`;
@@ -249,7 +265,7 @@
     if (!needVideos.length) {
       needList.innerHTML = '<li class="meta">None on this page</li>';
     } else {
-      needVideos.forEach((v) => appendVideoItem(needList, v));
+      needVideos.forEach((v, i) => appendVideoItem(needList, v, i + 1));
     }
     if (state.videoPage.need < needPages) {
       const btn = document.createElement("li");
@@ -265,7 +281,7 @@
     if (!hasVideos.length) {
       hasList.innerHTML = '<li class="meta">None on this page</li>';
     } else {
-      hasVideos.forEach((v) => appendVideoItem(hasList, v));
+      hasVideos.forEach((v, i) => appendVideoItem(hasList, v, i + 1));
     }
     if (state.videoPage.has < hasPages) {
       const btn = document.createElement("li");
@@ -285,6 +301,7 @@
     try {
       await api(`/api/videos/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (state.videoId === id) {
+        await releaseCurrentLock();
         state.videoId = null;
         state.meta = null;
         state.segments = [];
@@ -294,6 +311,7 @@
         $("stageEmpty").classList.remove("hidden");
         $("segmentsPanel").classList.add("hidden");
         $("modeLabel")?.classList.remove("segments-open");
+        updateLockPill();
       }
       await loadVideos();
       await loadLabelCounts();
@@ -515,7 +533,161 @@
     await fetchVideos(true);
   }
 
+  function collabDisplayName() {
+    const input = $("collabName");
+    const raw = (input?.value || state.collabName || "").trim();
+    return raw || "Annotator";
+  }
+
+  function updateLockPill() {
+    const pill = $("lockPill");
+    if (!pill) return;
+    if (!state.videoId) {
+      pill.hidden = true;
+      return;
+    }
+    const lock = state.locks[state.videoId];
+    if (!lock) {
+      pill.hidden = false;
+      pill.className = "lock-pill";
+      pill.textContent = "Editing";
+      return;
+    }
+    const mine = lock.client_id === state.clientId;
+    pill.hidden = false;
+    pill.className = mine ? "lock-pill" : "lock-pill other";
+    pill.textContent = mine ? "You hold the lock" : `Locked by ${lock.name || "someone"}`;
+  }
+
+  async function ensureCollabClient() {
+    if (state.clientId) return state.clientId;
+    const data = await api("/api/collab/hello", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: collabDisplayName() }),
+    });
+    state.clientId = data.client_id;
+    state.libraryRevision = data.revision || 0;
+    localStorage.setItem("actionmark_client_id", state.clientId);
+    return state.clientId;
+  }
+
+  async function releaseCurrentLock() {
+    if (!state.videoId || !state.clientId) return;
+    const vid = state.videoId;
+    try {
+      await api(
+        `/api/collab/lock/${encodeURIComponent(vid)}?client_id=${encodeURIComponent(state.clientId)}`,
+        { method: "DELETE" }
+      );
+    } catch (_) {
+      /* ignore */
+    }
+    if (state.locks[vid]?.client_id === state.clientId) {
+      delete state.locks[vid];
+    }
+  }
+
+  async function acquireVideoLock(videoId) {
+    await ensureCollabClient();
+    const data = await api(`/api/collab/lock/${encodeURIComponent(videoId)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: state.clientId, name: collabDisplayName() }),
+    });
+    if (data.lock) {
+      state.locks[videoId] = {
+        client_id: data.lock.client_id,
+        name: data.lock.name,
+      };
+    }
+    return data;
+  }
+
+  function startLockHeartbeat() {
+    if (state.lockHeartbeatTimer) clearInterval(state.lockHeartbeatTimer);
+    state.lockHeartbeatTimer = setInterval(async () => {
+      if (!state.clientId || !state.videoId) return;
+      try {
+        const data = await api("/api/collab/heartbeat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_id: state.clientId,
+            video_id: state.videoId,
+            name: collabDisplayName(),
+          }),
+        });
+        applyLocks(data.locks || []);
+        if (typeof data.revision === "number" && data.revision > state.libraryRevision) {
+          state.libraryRevision = data.revision;
+          await loadVideos();
+        }
+      } catch (_) {
+        /* ignore transient errors */
+      }
+    }, 15000);
+  }
+
+  function applyLocks(locks) {
+    const map = {};
+    (locks || []).forEach((l) => {
+      map[l.video_id] = { client_id: l.client_id, name: l.name };
+    });
+    state.locks = map;
+    renderVideoList();
+    updateLockPill();
+  }
+
+  async function pollCollabStatus() {
+    try {
+      await ensureCollabClient();
+      const data = await api(`/api/collab/status?since=${state.libraryRevision || 0}`);
+      applyLocks(data.locks || []);
+      if (data.changed && data.revision > state.libraryRevision) {
+        state.libraryRevision = data.revision;
+        // Refresh library only — do not reload the open video player
+        await loadVideos();
+      } else if (typeof data.revision === "number") {
+        state.libraryRevision = data.revision;
+      }
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function startCollabPolling() {
+    if (state.collabPollTimer) clearInterval(state.collabPollTimer);
+    state.collabPollTimer = setInterval(pollCollabStatus, 4000);
+    pollCollabStatus();
+  }
+
   async function selectVideo(id) {
+    if (state.videoId === id) return;
+
+    const previousId = state.videoId;
+    try {
+      await ensureCollabClient();
+      await acquireVideoLock(id);
+      if (previousId && previousId !== id) {
+        try {
+          await api(
+            `/api/collab/lock/${encodeURIComponent(previousId)}?client_id=${encodeURIComponent(state.clientId)}`,
+            { method: "DELETE" }
+          );
+        } catch (_) {
+          /* ignore */
+        }
+        if (state.locks[previousId]?.client_id === state.clientId) {
+          delete state.locks[previousId];
+        }
+      }
+    } catch (err) {
+      toast(err.message || "Video is locked by someone else", "error");
+      renderVideoList();
+      return;
+    }
+
     state.videoId = id;
     state.pendingStart = null;
     state.pendingEnd = null;
@@ -525,7 +697,9 @@
     $("stageActive").classList.remove("hidden");
     $("segmentsPanel").classList.remove("hidden");
     updateLabelLayout();
+    updateLockPill();
     renderVideoList();
+    startLockHeartbeat();
 
     const meta = await api(`/api/videos/${id}/meta`);
     state.meta = meta;
@@ -565,11 +739,14 @@
       duration: state.meta.duration,
       segments: state.segments,
     };
-    await api(`/api/annotations/${state.videoId}`, {
+    const data = await api(`/api/annotations/${state.videoId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (typeof data.revision === "number") {
+      state.libraryRevision = data.revision;
+    }
     await loadVideos();
     await loadLabelCounts();
     toast("Annotations saved", "ok");
@@ -1474,9 +1651,20 @@
 
   async function init() {
     try {
+      const nameInput = $("collabName");
+      if (nameInput) {
+        nameInput.value = state.collabName || "";
+        nameInput.addEventListener("change", () => {
+          state.collabName = nameInput.value.trim();
+          localStorage.setItem("actionmark_name", state.collabName);
+        });
+      }
+      await ensureCollabClient();
       await loadLabels();
       await loadVideos();
       await loadModels();
+      startCollabPolling();
+      startLockHeartbeat();
       await pollTrain();
       if (state.trainJobId) {
         state.pollTimer = setInterval(pollTrain, 2500);
@@ -1485,6 +1673,19 @@
       toast(err.message, "error");
     }
   }
+
+  window.addEventListener("beforeunload", () => {
+    if (!state.clientId) return;
+    const payload = JSON.stringify({ client_id: state.clientId, name: collabDisplayName() });
+    try {
+      navigator.sendBeacon?.(
+        "/api/collab/bye",
+        new Blob([payload], { type: "application/json" })
+      );
+    } catch (_) {
+      /* ignore */
+    }
+  });
 
   init();
 })();

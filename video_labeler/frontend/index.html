@@ -40,6 +40,10 @@
             <span class="count-total" id="libraryCount">0 videos</span>
             <button class="linkish" id="btnRefresh" type="button">Refresh</button>
           </div>
+          <label class="field collab-name-field">
+            <span>Your name</span>
+            <input id="collabName" type="text" maxlength="32" placeholder="Annotator" autocomplete="nickname" />
+          </label>
           <input
             id="videoSearch"
             class="video-search"
@@ -147,6 +151,7 @@
       <aside class="annotate-rail hidden" id="segmentsPanel">
         <header class="annotate-head">
           <h2>Annotate</h2>
+          <span class="lock-pill" id="lockPill" hidden></span>
         </header>
         <div class="segments-body" id="segmentsBody">
           <section class="annotate-block">

@@ -43,6 +43,16 @@ from .onnx_export import (
     resolve_work_file,
     start_onnx_export,
 )
+from .collab import (
+    acquire_lock,
+    bump_library_revision,
+    collab_status,
+    get_library_revision,
+    heartbeat,
+    new_client_id,
+    release_all_for_client,
+    release_lock,
+)
 from .train_runner import get_active_job, get_job, list_jobs, start_training, stop_training
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
@@ -406,6 +416,9 @@ async def upload_video(file: List[UploadFile] = File(...)):
 
     if not results and not skipped:
         raise HTTPException(400, errors[0]["error"] if errors else "Upload failed")
+    if results:
+        _get_video_index(force=True)
+        bump_library_revision()
     if len(uploads) == 1 and not errors:
         out = results[0] if results else skipped[0]
         return out
@@ -472,7 +485,13 @@ def delete_video(video_id: str):
     ann = config.ANNOTATIONS_DIR / f"{video_id}.json"
     if ann.exists():
         ann.unlink()
+    # Drop any lock on this video
+    for lock in list(collab_status()["locks"]):
+        if lock["video_id"] == video_id:
+            release_lock(video_id, lock["client_id"])
+            break
     _get_video_index(force=True)
+    bump_library_revision()
     return {"ok": True}
 
 
@@ -533,7 +552,72 @@ def put_annotation(video_id: str, payload: AnnotationPayload):
     data["video_id"] = video_id
     path = save_annotation(video_id, data)
     _get_video_index(force=True)
-    return {"ok": True, "path": str(path), "segments": len(payload.segments)}
+    rev = bump_library_revision()
+    return {
+        "ok": True,
+        "path": str(path),
+        "segments": len(payload.segments),
+        "revision": rev,
+    }
+
+
+# ---------- Collaboration (locks + library refresh) ----------
+class CollabHelloRequest(BaseModel):
+    name: Optional[str] = ""
+
+
+class CollabLockRequest(BaseModel):
+    client_id: str
+    name: Optional[str] = ""
+
+
+class CollabHeartbeatRequest(BaseModel):
+    client_id: str
+    video_id: Optional[str] = None
+    name: Optional[str] = ""
+
+
+@app.post("/api/collab/hello")
+def collab_hello(req: CollabHelloRequest = CollabHelloRequest()):
+    return {
+        "ok": True,
+        "client_id": new_client_id(),
+        "name": (req.name or "").strip() or "Annotator",
+        "revision": get_library_revision(),
+        "ttl_sec": 45,
+    }
+
+
+@app.get("/api/collab/status")
+def api_collab_status(since: int = 0):
+    return collab_status(since=since)
+
+
+@app.post("/api/collab/lock/{video_id}")
+def api_collab_lock(video_id: str, req: CollabLockRequest):
+    result = acquire_lock(video_id, req.client_id, req.name or "")
+    if not result.get("ok"):
+        raise HTTPException(409, result.get("error", "Locked"))
+    return result
+
+
+@app.delete("/api/collab/lock/{video_id}")
+def api_collab_unlock(video_id: str, client_id: str):
+    result = release_lock(video_id, client_id)
+    if not result.get("ok"):
+        raise HTTPException(403, result.get("error", "Cannot release lock"))
+    return result
+
+
+@app.post("/api/collab/heartbeat")
+def api_collab_heartbeat(req: CollabHeartbeatRequest):
+    return heartbeat(req.client_id, req.video_id, req.name or "")
+
+
+@app.post("/api/collab/bye")
+def api_collab_bye(req: CollabLockRequest):
+    n = release_all_for_client(req.client_id)
+    return {"ok": True, "released": n}
 
 
 @app.post("/api/export")
