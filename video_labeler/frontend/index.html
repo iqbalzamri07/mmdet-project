@@ -27,7 +27,7 @@
     </header>
 
     <!-- LABEL MODE -->
-    <main class="layout" id="modeLabel">
+    <main class="layout layout-label" id="modeLabel">
       <aside class="sidebar">
         <section class="panel">
           <div class="panel-head">
@@ -66,55 +66,81 @@
         </section>
       </aside>
 
-      <section class="workspace">
-        <div class="stage" id="stageEmpty">
+      <section class="workspace workspace-label">
+        <div class="workspace-main">
+        <div class="stage stage-fill" id="stageEmpty">
           <div class="empty-state">
             <h2>Upload a video to start labeling</h2>
             <p>Pick posture (sitting/standing) plus an optional activity, mark start/end, optionally crop the person, then export and train.</p>
           </div>
         </div>
 
-        <div class="stage hidden" id="stageActive">
-          <div class="player-wrap">
-            <div class="canvas-stack" id="canvasStack">
-              <video id="video" playsinline></video>
-              <canvas id="overlay"></canvas>
+        <div class="stage stage-fill hidden" id="stageActive">
+          <div class="player-area">
+            <div class="player-wrap">
+              <div class="canvas-stack" id="canvasStack">
+                <video id="video" playsinline></video>
+                <canvas id="overlay"></canvas>
+              </div>
+              <div class="transport">
+                <button class="icon-btn" id="btnPlay" type="button" title="Play/Pause">▶</button>
+                <button class="icon-btn" id="btnPrev" type="button" title="Prev frame">‹</button>
+                <button class="icon-btn" id="btnNext" type="button" title="Next frame">›</button>
+                <input type="range" id="seek" min="0" max="1000" value="0" />
+                <div class="timecode" id="timecode">0 / 0</div>
+              </div>
+              <div class="timeline-marks" id="timelineMarks"></div>
             </div>
-            <div class="transport">
-              <button class="icon-btn" id="btnPlay" type="button" title="Play/Pause">▶</button>
-              <button class="icon-btn" id="btnPrev" type="button" title="Prev frame">‹</button>
-              <button class="icon-btn" id="btnNext" type="button" title="Next frame">›</button>
-              <input type="range" id="seek" min="0" max="1000" value="0" />
-              <div class="timecode" id="timecode">0 / 0</div>
+
+            <div class="label-bar">
+              <div class="toolbar-group">
+                <label class="field">
+                  <span>Posture</span>
+                  <select id="postureSelect"></select>
+                </label>
+                <label class="field">
+                  <span>Activity</span>
+                  <select id="activitySelect"></select>
+                </label>
+              </div>
+              <div class="toolbar-group">
+                <button class="btn btn-ghost" id="btnMarkStart" type="button">Mark start</button>
+                <button class="btn btn-ghost" id="btnMarkEnd" type="button">Mark end</button>
+                <button class="btn btn-primary" id="btnSaveSeg" type="button">Save segment</button>
+              </div>
+              <div class="toolbar-group">
+                <button class="btn btn-ghost" id="btnToggleCrop" type="button">Draw crop</button>
+                <button class="btn btn-ghost" id="btnClearCrop" type="button">Clear crop</button>
+              </div>
+              <div class="pending" id="pendingInfo">Start: — · End: —</div>
             </div>
-            <div class="timeline-marks" id="timelineMarks"></div>
           </div>
 
-          <div class="label-bar">
-            <div class="toolbar-group">
-              <label class="field">
-                <span>Posture</span>
-                <select id="postureSelect"></select>
-              </label>
-              <label class="field">
-                <span>Activity</span>
-                <select id="activitySelect"></select>
-              </label>
+          <div class="segments-panel hidden" id="segmentsPanel">
+            <div class="panel-head">
+              <h2>Segments</h2>
+              <button class="btn btn-small btn-primary" id="btnSaveAll" type="button">Save annotations</button>
             </div>
-            <div class="toolbar-group">
-              <button class="btn btn-ghost" id="btnMarkStart" type="button">Mark start</button>
-              <button class="btn btn-ghost" id="btnMarkEnd" type="button">Mark end</button>
-              <button class="btn btn-primary" id="btnSaveSeg" type="button">Save segment</button>
+            <div class="seg-table-wrap">
+              <table class="seg-table">
+                <thead>
+                  <tr>
+                    <th>Posture</th>
+                    <th>Activity</th>
+                    <th>Start</th>
+                    <th>End</th>
+                    <th>Crop</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="segBody"></tbody>
+              </table>
             </div>
-            <div class="toolbar-group">
-              <button class="btn btn-ghost" id="btnToggleCrop" type="button">Draw crop</button>
-              <button class="btn btn-ghost" id="btnClearCrop" type="button">Clear crop</button>
-            </div>
-            <div class="pending" id="pendingInfo">Start: — · End: —</div>
           </div>
         </div>
+        </div>
 
-        <section class="panel library-panel">
+        <section class="panel library-panel library-dock">
           <div class="panel-head">
             <h2>Library</h2>
             <div class="panel-head-actions">
@@ -140,31 +166,11 @@
             </div>
           </div>
         </section>
-
-        <div class="segments-panel hidden" id="segmentsPanel">
-          <div class="panel-head">
-            <h2>Segments</h2>
-            <button class="btn btn-small btn-primary" id="btnSaveAll" type="button">Save annotations</button>
-          </div>
-          <table class="seg-table">
-            <thead>
-              <tr>
-                <th>Posture</th>
-                <th>Activity</th>
-                <th>Start</th>
-                <th>End</th>
-                <th>Crop</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="segBody"></tbody>
-          </table>
-        </div>
       </section>
     </main>
 
     <!-- TEST MODE -->
-    <main class="layout hidden" id="modeTest">
+    <main class="layout layout-test hidden" id="modeTest">
       <aside class="sidebar">
         <section class="panel">
           <div class="panel-head">
@@ -220,41 +226,45 @@
         </section>
       </aside>
 
-      <section class="workspace">
-        <div class="stage" id="testEmpty">
+      <section class="workspace workspace-test">
+        <div class="stage stage-fill" id="testEmpty">
           <div class="empty-state">
             <h2>Test your trained model</h2>
             <p>Select a checkpoint, then upload a video or start the camera. Results show person boxes with posture and activity.</p>
           </div>
         </div>
 
-        <div class="stage hidden" id="testActive">
-          <div class="player-wrap">
-            <div class="canvas-stack result-stack hidden" id="resultStack">
-              <video id="resultVideo" controls playsinline></video>
-            </div>
-            <div class="canvas-stack result-stack hidden" id="liveStack">
-              <video id="liveVideo" autoplay muted playsinline></video>
-              <canvas id="liveOverlay"></canvas>
+        <div class="stage stage-fill hidden" id="testActive">
+          <div class="test-viewport">
+            <div class="player-wrap test-player">
+              <div class="canvas-stack result-stack hidden" id="resultStack">
+                <video id="resultVideo" controls playsinline></video>
+              </div>
+              <div class="canvas-stack result-stack hidden" id="liveStack">
+                <video id="liveVideo" autoplay muted playsinline></video>
+                <canvas id="liveOverlay"></canvas>
+              </div>
             </div>
           </div>
-          <div class="segments-panel">
+          <div class="segments-panel test-predictions">
             <div class="panel-head">
               <h2>Predictions</h2>
               <a class="btn btn-small btn-ghost" id="btnDownloadResult" href="#" download>Download video</a>
             </div>
-            <table class="seg-table">
-              <thead>
-                <tr>
-                  <th>Person</th>
-                  <th>Posture</th>
-                  <th>Activity</th>
-                  <th>Score</th>
-                  <th>Frames</th>
-                </tr>
-              </thead>
-              <tbody id="predBody"></tbody>
-            </table>
+            <div class="seg-table-wrap">
+              <table class="seg-table">
+                <thead>
+                  <tr>
+                    <th>Person</th>
+                    <th>Posture</th>
+                    <th>Activity</th>
+                    <th>Score</th>
+                    <th>Frames</th>
+                  </tr>
+                </thead>
+                <tbody id="predBody"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>

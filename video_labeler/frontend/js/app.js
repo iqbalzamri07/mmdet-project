@@ -200,7 +200,7 @@
     li.innerHTML = `
       <div class="video-row">
         <div class="video-info">
-          <div class="name">${v.filename}</div>
+          <div class="name" title="${v.filename}">${v.filename}</div>
           <div class="meta">${Math.round(v.duration || 0)}s · ${v.segments || 0} segments · ${v.total_frames || 0} frames</div>
         </div>
         <button type="button" class="btn-delete-video" title="Delete video" aria-label="Delete ${v.filename}">×</button>
@@ -354,6 +354,13 @@
     drawOverlay();
   }
 
+  function relayoutPlayers() {
+    requestAnimationFrame(() => {
+      if (!$("stageActive").classList.contains("hidden")) resizeOverlay();
+      if (testState.cameraOn) drawLiveOverlay();
+    });
+  }
+
   function videoDisplayRect() {
     const wrap = overlay.parentElement.getBoundingClientRect();
     const vw = videoEl.videoWidth || state.meta?.width || 1;
@@ -491,6 +498,7 @@
       resizeOverlay();
       syncSeek();
     };
+    relayoutPlayers();
     renderSegments();
     toast(`Loaded ${meta.filename}`);
   }
@@ -726,7 +734,7 @@
     state.drawing = false;
   });
 
-  window.addEventListener("resize", resizeOverlay);
+  window.addEventListener("resize", relayoutPlayers);
 
   $("btnExport").onclick = async () => {
     try {
@@ -859,6 +867,7 @@
     $("tabTest").classList.toggle("active", !isLabel);
     if (isLabel) stopCamera();
     if (!isLabel) loadModels();
+    relayoutPlayers();
   }
 
   $("tabLabel").onclick = () => setMode("label");
@@ -958,6 +967,7 @@
         <td>${p.frames}</td>`;
       body.appendChild(tr);
     });
+    relayoutPlayers();
   }
 
   $("btnRunTest").onclick = async () => {
@@ -1004,6 +1014,7 @@
     $("resultStack").classList.add("hidden");
     $("liveStack").classList.remove("hidden");
     $("btnDownloadResult").classList.add("hidden");
+    relayoutPlayers();
   }
 
   function drawLiveOverlay() {
@@ -1159,9 +1170,6 @@
     stopCamera();
     toast("Camera stopped", "ok");
   };
-  window.addEventListener("resize", () => {
-    if (testState.cameraOn) drawLiveOverlay();
-  });
 
   async function init() {
     try {
