@@ -322,6 +322,7 @@
       body.appendChild(tr);
     });
     drawTimeline();
+    drawOverlay();
   }
 
   function updatePending() {
@@ -396,21 +397,57 @@
     };
   }
 
+  function parseBbox(bbox) {
+    if (!bbox || bbox.length !== 4) return null;
+    let [x1, y1, x2, y2] = bbox.map(Number);
+    const vw = videoEl.videoWidth || state.meta?.width || 1;
+    const vh = videoEl.videoHeight || state.meta?.height || 1;
+    if (Math.max(x1, y1, x2, y2) <= 1.5) {
+      x1 *= vw;
+      x2 *= vw;
+      y1 *= vh;
+      y2 *= vh;
+    }
+    return { x1, y1, x2, y2 };
+  }
+
+  function segmentsAtFrame(frame) {
+    return state.segments.filter((s) => s.start_frame <= frame && frame <= s.end_frame);
+  }
+
+  function drawBboxOnCanvas(bbox, style) {
+    const rect = typeof bbox?.x1 === "number" ? bbox : parseBbox(bbox);
+    if (!rect) return;
+    const r = videoDisplayRect();
+    const x = r.ox + (rect.x1 / r.vw) * r.dw;
+    const y = r.oy + (rect.y1 / r.vh) * r.dh;
+    const w = ((rect.x2 - rect.x1) / r.vw) * r.dw;
+    const h = ((rect.y2 - rect.y1) / r.vh) * r.dh;
+    ctx.fillStyle = style.fill;
+    ctx.strokeStyle = style.stroke;
+    ctx.lineWidth = style.lineWidth ?? 2;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
+  }
+
   function drawOverlay() {
     const wrap = overlay.parentElement.getBoundingClientRect();
     ctx.clearRect(0, 0, wrap.width, wrap.height);
-    const r = videoDisplayRect();
-    const bbox = state.cropDraft;
-    if (!bbox) return;
-    const x = r.ox + (bbox.x1 / r.vw) * r.dw;
-    const y = r.oy + (bbox.y1 / r.vh) * r.dh;
-    const w = ((bbox.x2 - bbox.x1) / r.vw) * r.dw;
-    const h = ((bbox.y2 - bbox.y1) / r.vh) * r.dh;
-    ctx.fillStyle = "rgba(14, 118, 110, 0.18)";
-    ctx.strokeStyle = "#0f766e";
-    ctx.lineWidth = 2;
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeRect(x, y, w, h);
+    const frame = currentFrame();
+    segmentsAtFrame(frame).forEach((seg) => {
+      if (seg.bbox) {
+        drawBboxOnCanvas(seg.bbox, {
+          fill: "rgba(224, 90, 60, 0.15)",
+          stroke: "#e05a3c",
+        });
+      }
+    });
+    if (state.cropDraft) {
+      drawBboxOnCanvas(state.cropDraft, {
+        fill: "rgba(14, 118, 110, 0.18)",
+        stroke: "#0f766e",
+      });
+    }
   }
 
   function drawTimeline() {
