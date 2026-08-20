@@ -37,16 +37,18 @@
     <!-- LABEL MODE -->
     <main class="layout" id="modeLabel">
       <aside class="sidebar">
-        <section class="panel">
+        <section class="panel classes-panel">
           <div class="panel-head">
             <h2>Classes</h2>
-            <span class="count-total" id="classCountTotal">0 total</span>
+            <div class="panel-head-actions">
+              <span class="count-total" id="classCountTotal">0 total</span>
+              <button class="btn btn-small btn-ghost" id="btnEditLabels" type="button">Edit</button>
+            </div>
           </div>
           <div class="label-chips" id="labelChips"></div>
           <div class="label-edit">
             <input id="newLabelInput" type="text" placeholder="Add activity (e.g. drinking)" />
-            <button class="btn btn-small" id="btnAddLabel" type="button">Add</button>
-            <button class="btn btn-small btn-ghost" id="btnEditLabels" type="button">Edit</button>
+            <button class="btn btn-small btn-primary" id="btnAddLabel" type="button">Add</button>
           </div>
         </section>
 

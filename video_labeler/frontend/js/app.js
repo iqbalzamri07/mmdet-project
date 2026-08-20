@@ -90,7 +90,7 @@
   function renderChip(label) {
     const count = state.counts[label] || 0;
     const chip = document.createElement("span");
-    chip.className = "chip";
+    chip.className = state.editingClasses ? "chip chip-editing" : "chip";
     chip.innerHTML = `<span class="chip-name">${label}</span><span class="chip-count">${count}</span>`;
     if (state.editingClasses) {
       const btn = document.createElement("button");
@@ -138,6 +138,7 @@
     groups.forEach((group) => {
       if (!group.items.length) return;
       const wrap = document.createElement("div");
+      wrap.className = "chip-group";
       wrap.innerHTML = `<span class="chip-group-title">${group.title}</span>`;
       const row = document.createElement("div");
       row.className = "chip-row";

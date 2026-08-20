@@ -332,8 +332,14 @@ html, body {
 .label-chips {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 12px;
+  margin-bottom: 12px;
+  max-height: 280px;
+  overflow: auto;
+  padding-right: 2px;
+}
+.chip-group {
+  min-width: 0;
 }
 .chip-group-title {
   display: block;
@@ -342,7 +348,7 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 .chip-row {
   display: flex;
@@ -353,13 +359,21 @@ html, body {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
   background: #eef3f6;
   border-radius: 999px;
-  padding: 4px 6px 4px 10px;
+  padding: 4px 8px 4px 10px;
   font-size: 0.8rem;
   font-weight: 500;
+  min-width: 0;
+}
+.chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chip-count {
+  flex: 0 0 auto;
   min-width: 1.4em;
   padding: 1px 7px;
   border-radius: 999px;
@@ -370,6 +384,7 @@ html, body {
   font-size: 0.75rem;
 }
 .chip-remove {
+  flex: 0 0 auto;
   border: 0;
   background: transparent;
   color: var(--muted);
@@ -385,6 +400,9 @@ html, body {
   background: var(--coral-soft);
   color: var(--coral);
 }
+.chip-editing {
+  padding-right: 4px;
+}
 .count-total {
   font-size: 0.75rem;
   font-weight: 600;
@@ -399,13 +417,20 @@ html, body {
 .label-edit {
   display: flex;
   gap: 6px;
+  align-items: stretch;
+  min-width: 0;
 }
 .label-edit input {
   flex: 1;
+  min-width: 0;
+  width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 10px;
   font: 0.85rem var(--font);
+}
+.label-edit .btn {
+  flex: 0 0 auto;
 }
 
 .status-pill {
