@@ -497,17 +497,56 @@ html, body {
 
 .annotate-log-block {
   flex-shrink: 0;
-  max-height: 120px;
+  max-height: none;
   overflow: hidden;
+  display: block;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.annotate-log-block > summary {
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.annotate-log-block > summary::-webkit-details-marker {
+  display: none;
+}
+
+.annotate-log-block > summary::before {
+  content: "▸";
+  font-size: 0.7rem;
+  color: var(--teal);
+}
+
+.annotate-log-block[open] > summary::before {
+  content: "▾";
+}
+
+.annotate-log-block[open] {
+  max-height: 140px;
   display: flex;
   flex-direction: column;
 }
 
 .annotate-log {
   list-style: none;
-  margin: 0;
+  margin: 10px 0 0;
   padding: 0;
   overflow-y: auto;
+  min-height: 0;
+  flex: 1;
   font-size: 0.75rem;
   color: var(--muted);
 }

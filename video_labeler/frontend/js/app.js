@@ -567,10 +567,12 @@
   function renderAnnotateMeta(meta) {
     const el = $("annotateMeta");
     const logEl = $("annotateLog");
+    const summary = $("annotateLogSummary");
     if (!el) return;
     if (!meta) {
       el.textContent = "Select a video to annotate.";
       if (logEl) logEl.innerHTML = "";
+      if (summary) summary.textContent = "Save history";
       return;
     }
     const who = meta.last_annotator || "";
@@ -586,8 +588,13 @@
     }
     if (logEl) {
       const log = [...(meta.annotation_log || [])].reverse().slice(0, 8);
+      if (summary) {
+        summary.textContent = log.length
+          ? `Save history (${log.length})`
+          : "Save history";
+      }
       if (!log.length) {
-        logEl.innerHTML = '<li>No save history yet.</li>';
+        logEl.innerHTML = "<li>No save history yet.</li>";
       } else {
         logEl.innerHTML = log
           .map(
