@@ -261,12 +261,27 @@
         <div class="nav-panel active" id="testPanelRun">
           <section class="sidebar-card">
             <div class="panel-head">
+              <h2>Mode</h2>
+            </div>
+            <div class="source-tabs">
+              <button type="button" class="mode-tab active" id="runModeSingle">Single</button>
+              <button type="button" class="mode-tab" id="runModeCompare">Compare</button>
+            </div>
+            <p class="hint" id="runModeHint">Run one checkpoint on a clip.</p>
+          </section>
+
+          <section class="sidebar-card">
+            <div class="panel-head">
               <h2>Model</h2>
               <button class="linkish" id="btnRefreshModels" type="button">Refresh</button>
             </div>
             <label class="field block-field">
-              <span>Checkpoint</span>
+              <span id="modelSelectLabel">Checkpoint</span>
               <select id="modelSelect"></select>
+            </label>
+            <label class="field block-field hidden" id="modelSelectBWrap">
+              <span>Checkpoint B</span>
+              <select id="modelSelectB"></select>
             </label>
             <p class="hint" id="modelHint">Pick a trained .pth or .onnx from work_dirs.</p>
           </section>
@@ -293,6 +308,9 @@
             <p class="hint" id="testFileName">No file selected</p>
             <button class="btn btn-accent btn-block" id="btnRunTest" type="button">
               Run inference
+            </button>
+            <button class="btn btn-accent btn-block hidden" id="btnCompareUpload" type="button">
+              Compare A vs B
             </button>
           </section>
 
@@ -327,6 +345,9 @@
 
             <button class="btn btn-accent btn-block" id="btnRunTestLibrary" type="button" disabled>
               Run inference
+            </button>
+            <button class="btn btn-accent btn-block hidden" id="btnCompareLibrary" type="button" disabled>
+              Compare A vs B
             </button>
           </section>
 
@@ -373,7 +394,8 @@
             <p class="empty-lead">Pick a checkpoint, then choose a source.</p>
             <ol class="howto-steps">
               <li><strong>Upload</strong> a new test video, or</li>
-              <li><strong>Library</strong> — re-run a previous Test upload (not Label videos), or</li>
+              <li><strong>Library</strong> — re-run a previous Test upload, or</li>
+              <li><strong>Compare</strong> — run two checkpoints on the same clip, or</li>
               <li><strong>Camera</strong> for live clips.</li>
             </ol>
             <p class="empty-tip">Results show person boxes with posture and activity. Open Results to replay past runs.</p>
@@ -410,6 +432,59 @@
                 </thead>
                 <tbody id="predBody"></tbody>
               </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="stage stage-fill hidden" id="testCompare">
+          <div class="compare-grid">
+            <div class="compare-pane">
+              <div class="compare-pane-head">
+                <h3 id="compareTitleA">Model A</h3>
+                <a class="btn btn-small btn-ghost" id="btnDownloadCompareA" href="#" download>Download</a>
+              </div>
+              <div class="player-wrap test-player compare-player">
+                <div class="canvas-stack result-stack">
+                  <video id="resultVideoA" controls playsinline></video>
+                </div>
+              </div>
+              <div class="seg-table-wrap compare-table-wrap">
+                <table class="seg-table">
+                  <thead>
+                    <tr>
+                      <th>Person</th>
+                      <th>Posture</th>
+                      <th>Activity</th>
+                      <th>Score</th>
+                    </tr>
+                  </thead>
+                  <tbody id="predBodyA"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="compare-pane">
+              <div class="compare-pane-head">
+                <h3 id="compareTitleB">Model B</h3>
+                <a class="btn btn-small btn-ghost" id="btnDownloadCompareB" href="#" download>Download</a>
+              </div>
+              <div class="player-wrap test-player compare-player">
+                <div class="canvas-stack result-stack">
+                  <video id="resultVideoB" controls playsinline></video>
+                </div>
+              </div>
+              <div class="seg-table-wrap compare-table-wrap">
+                <table class="seg-table">
+                  <thead>
+                    <tr>
+                      <th>Person</th>
+                      <th>Posture</th>
+                      <th>Activity</th>
+                      <th>Score</th>
+                    </tr>
+                  </thead>
+                  <tbody id="predBodyB"></tbody>
+                </table>
+              </div>
             </div>
           </div>
         </div>

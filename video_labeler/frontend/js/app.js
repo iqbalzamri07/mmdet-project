@@ -1382,6 +1382,9 @@
     libraryResults: [],
     libraryPaging: { total: 0, pages: 1 },
     libVideo: null,
+    compareMode: false,
+    compareJobA: null,
+    compareJobB: null,
   };
 
   function formatTestDate(iso) {
@@ -1508,6 +1511,7 @@
         testState.pollTimer = null;
       }
       $("testActive")?.classList.add("hidden");
+      $("testCompare")?.classList.add("hidden");
       $("testEmpty")?.classList.remove("hidden");
       $("testPill").textContent = "idle";
       $("testPill").className = "status-pill";
@@ -1563,11 +1567,16 @@
     const v = testState.libVideo;
     const card = $("testLibSelected");
     const btn = $("btnRunTestLibrary");
+    const btnCmp = $("btnCompareLibrary");
     if (!card || !btn) return;
     if (!v) {
       card.hidden = true;
       btn.disabled = true;
       btn.textContent = "Run inference";
+      if (btnCmp) {
+        btnCmp.disabled = true;
+        btnCmp.textContent = "Compare A vs B";
+      }
       return;
     }
     card.hidden = false;
@@ -1575,7 +1584,41 @@
     $("testLibSelectedMeta").textContent = v.meta || "Test upload";
     btn.disabled = false;
     btn.textContent = "Run on selected video";
+    if (btnCmp) {
+      btnCmp.disabled = false;
+      btnCmp.textContent = "Compare A vs B";
+    }
   }
+
+  function setTestRunMode(mode) {
+    const compare = mode === "compare";
+    testState.compareMode = compare;
+    $("runModeSingle")?.classList.toggle("active", !compare);
+    $("runModeCompare")?.classList.toggle("active", compare);
+    $("modelSelectBWrap")?.classList.toggle("hidden", !compare);
+    if ($("modelSelectLabel")) {
+      $("modelSelectLabel").textContent = compare ? "Checkpoint A" : "Checkpoint";
+    }
+    if ($("runModeHint")) {
+      $("runModeHint").textContent = compare
+        ? "Runs A then B on the same clip (one after another)."
+        : "Run one checkpoint on a clip.";
+    }
+    $("btnRunTest")?.classList.toggle("hidden", compare);
+    $("btnCompareUpload")?.classList.toggle("hidden", !compare);
+    $("btnRunTestLibrary")?.classList.toggle("hidden", compare);
+    $("btnCompareLibrary")?.classList.toggle("hidden", !compare);
+    $("srcCamera")?.classList.toggle("hidden", compare);
+    if (compare && testState.source === "camera") {
+      setTestSource("video");
+    }
+    if (compare) {
+      loadModels();
+    }
+  }
+
+  $("runModeSingle")?.addEventListener("click", () => setTestRunMode("single"));
+  $("runModeCompare")?.addEventListener("click", () => setTestRunMode("compare"));
 
   function formatBytes(n) {
     if (!n && n !== 0) return "";
@@ -1750,6 +1793,7 @@
       const models = data.models || [];
       const pthModels = models.filter((m) => (m.format || "pth") !== "onnx");
       fillModelSelect($("modelSelect"), models, "No checkpoints found — train first");
+      fillModelSelect($("modelSelectB"), models, "No checkpoints found — train first");
       fillModelSelect($("onnxSourceSelect"), pthModels, "No .pth checkpoints — train first");
       if (!models.length) {
         $("modelHint").textContent = "No .pth/.onnx files in work_dirs/slowfast_multilabel/";
@@ -1757,6 +1801,15 @@
       }
       const selected = $("modelSelect")?.value;
       const picked = models.find((m) => m.name === selected) || models.find((m) => m.recommended) || models[0];
+      // Prefer a different second model for compare
+      const selB = $("modelSelectB");
+      if (selB && models.length > 1) {
+        const other =
+          models.find((m) => m.name !== picked?.name && m.recommended) ||
+          models.find((m) => m.name !== picked?.name) ||
+          models[0];
+        if (!selB.value || selB.value === picked?.name) selB.value = other.name;
+      }
       $("modelHint").textContent = picked
         ? `Selected: ${picked.name} (${picked.format === "onnx" ? "ONNX" : "PyTorch"})`
         : "";
@@ -1890,6 +1943,7 @@
   function showTestResult(job) {
     stopCamera();
     $("testEmpty").classList.add("hidden");
+    $("testCompare")?.classList.add("hidden");
     $("testActive").classList.remove("hidden");
     $("liveStack").classList.add("hidden");
     $("resultStack").classList.remove("hidden");
@@ -1921,6 +1975,174 @@
     });
     relayoutPlayers();
   }
+
+  function fillPredTable(bodyId, persons) {
+    const body = $(bodyId);
+    if (!body) return;
+    body.innerHTML = "";
+    if (!persons?.length) {
+      body.innerHTML = '<tr><td colspan="4">No persons detected</td></tr>';
+      return;
+    }
+    persons.forEach((p) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>P${p.id}</td>
+        <td>${p.posture || "—"}</td>
+        <td>${p.activity || "—"}</td>
+        <td>${((p.score || 0) * 100).toFixed(1)}%</td>`;
+      body.appendChild(tr);
+    });
+  }
+
+  function showCompareResults(jobA, jobB) {
+    stopCamera();
+    $("testEmpty").classList.add("hidden");
+    $("testActive").classList.add("hidden");
+    $("testCompare")?.classList.remove("hidden");
+    setMobilePanel("modeTest", "stage");
+
+    const nameA = PathName(jobA.checkpoint) || "Model A";
+    const nameB = PathName(jobB.checkpoint) || "Model B";
+    if ($("compareTitleA")) $("compareTitleA").textContent = `A · ${nameA}`;
+    if ($("compareTitleB")) $("compareTitleB").textContent = `B · ${nameB}`;
+
+    const urlA = `/api/test/result/${jobA.job_id}/video?t=${Date.now()}`;
+    const urlB = `/api/test/result/${jobB.job_id}/video?t=${Date.now()}`;
+    const vidA = $("resultVideoA");
+    const vidB = $("resultVideoB");
+    if (vidA) {
+      vidA.src = urlA;
+      vidA.load();
+    }
+    if (vidB) {
+      vidB.src = urlB;
+      vidB.load();
+    }
+    if ($("btnDownloadCompareA")) {
+      $("btnDownloadCompareA").href = urlA;
+      $("btnDownloadCompareA").download = `${jobA.job_id}.mp4`;
+    }
+    if ($("btnDownloadCompareB")) {
+      $("btnDownloadCompareB").href = urlB;
+      $("btnDownloadCompareB").download = `${jobB.job_id}.mp4`;
+    }
+    fillPredTable("predBodyA", jobA.persons || []);
+    fillPredTable("predBodyB", jobB.persons || []);
+    relayoutPlayers();
+  }
+
+  async function waitForTestJob(jobId, label) {
+    for (;;) {
+      const data = await api(`/api/test/status?job_id=${encodeURIComponent(jobId)}`);
+      const job = data.job;
+      if (!job) throw new Error(`${label} job missing`);
+      const lines = job.log || [];
+      $("testLog").textContent = `[${label}] ${lines.length ? lines.slice(-6).join("\n") : `(${job.status})`}`;
+      const done = job.status === "completed" || Boolean(job.finished_at && job.output_video);
+      if (done) return job;
+      if (job.status === "failed") {
+        throw new Error(job.error || `${label} failed`);
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+  }
+
+  async function uploadTestFileOnce(file) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/test/upload", { method: "POST", body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.error || res.statusText);
+    return data.filename;
+  }
+
+  async function startCompareOnTestVideo(testVideoName) {
+    const ckptA = $("modelSelect")?.value;
+    const ckptB = $("modelSelectB")?.value;
+    if (!ckptA || !ckptB) {
+      toast("Pick checkpoint A and B", "error");
+      return;
+    }
+    if (ckptA === ckptB) {
+      toast("Pick two different checkpoints", "error");
+      return;
+    }
+    stopCamera();
+    if (testState.pollTimer) {
+      clearInterval(testState.pollTimer);
+      testState.pollTimer = null;
+    }
+    try {
+      $("testPill").textContent = "compare A";
+      $("testPill").className = "status-pill running";
+      $("testLog").textContent = `Compare: starting A (${ckptA})…`;
+
+      const fdA = new FormData();
+      fdA.append("checkpoint", ckptA);
+      fdA.append("test_video", testVideoName);
+      const resA = await fetch("/api/test/run", { method: "POST", body: fdA });
+      const dataA = await resA.json().catch(() => ({}));
+      if (!resA.ok) throw new Error(dataA.detail || dataA.error || resA.statusText);
+      const jobIdA = dataA.job.job_id;
+      testState.jobId = jobIdA;
+      toast("Compare: running model A…");
+      const jobA = await waitForTestJob(jobIdA, "A");
+
+      $("testPill").textContent = "compare B";
+      $("testLog").textContent = `Compare: starting B (${ckptB})…`;
+      const fdB = new FormData();
+      fdB.append("checkpoint", ckptB);
+      fdB.append("test_video", testVideoName);
+      const resB = await fetch("/api/test/run", { method: "POST", body: fdB });
+      const dataB = await resB.json().catch(() => ({}));
+      if (!resB.ok) throw new Error(dataB.detail || dataB.error || resB.statusText);
+      const jobIdB = dataB.job.job_id;
+      testState.jobId = jobIdB;
+      toast("Compare: running model B…");
+      const jobB = await waitForTestJob(jobIdB, "B");
+
+      testState.compareJobA = jobA.job_id;
+      testState.compareJobB = jobB.job_id;
+      $("testPill").textContent = "completed";
+      $("testPill").className = "status-pill completed";
+      $("testLog").textContent = `Compare done.\nA: ${ckptA}\nB: ${ckptB}`;
+      showCompareResults(jobA, jobB);
+      loadTestLibrary(true).catch(() => {});
+      toast("Compare complete — A vs B side by side", "ok");
+    } catch (err) {
+      toast(err.message, "error");
+      $("testPill").textContent = "failed";
+      $("testPill").className = "status-pill failed";
+    }
+  }
+
+  $("btnCompareUpload")?.addEventListener("click", async () => {
+    if (!testState.file) {
+      toast("Upload a test video first", "error");
+      return;
+    }
+    try {
+      $("testPill").textContent = "uploading";
+      $("testPill").className = "status-pill running";
+      $("testLog").textContent = "Uploading once for compare…";
+      const filename = await uploadTestFileOnce(testState.file);
+      await startCompareOnTestVideo(filename);
+    } catch (err) {
+      toast(err.message, "error");
+      $("testPill").textContent = "failed";
+      $("testPill").className = "status-pill failed";
+    }
+  });
+
+  $("btnCompareLibrary")?.addEventListener("click", async () => {
+    const filename = testState.libVideo?.filename;
+    if (!filename) {
+      toast("Pick a test upload", "error");
+      return;
+    }
+    await startCompareOnTestVideo(filename);
+  });
 
   $("btnRunTest").onclick = async () => {
     stopCamera();
@@ -1971,6 +2193,7 @@
 
   function showLiveStage() {
     $("testEmpty").classList.add("hidden");
+    $("testCompare")?.classList.add("hidden");
     $("testActive").classList.remove("hidden");
     $("resultStack").classList.add("hidden");
     $("liveStack").classList.remove("hidden");
