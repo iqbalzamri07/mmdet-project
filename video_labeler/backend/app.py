@@ -32,6 +32,7 @@ from .infer import (
     TEST_OUTPUT_DIR,
     get_test_job,
     list_checkpoints,
+    list_test_inputs,
     list_test_jobs,
     list_test_library,
     run_live_clip,
@@ -716,8 +717,7 @@ def train_log(job_id: str, tail: int = 200):
 # ---------- Test / inference ----------
 class TestRequest(BaseModel):
     checkpoint: str  # filename under work_dirs/slowfast_multilabel
-    video_id: Optional[str] = None  # use library video
-    # or upload via multipart separately
+    test_video: Optional[str] = None  # filename under data/tests/inputs
 
 
 @app.get("/api/models")
@@ -790,13 +790,12 @@ async def test_upload(file: UploadFile = File(...)):
 @app.post("/api/test/run")
 async def test_run(
     checkpoint: str = Form(...),
-    video_id: Optional[str] = Form(None),
     test_video: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
 ):
     """
-    Start inference.
-    Provide one of: library video_id, previously uploaded test_video filename, or file upload.
+    Start inference on a Test video only (not Label library).
+    Provide one of: previously uploaded test_video filename, or file upload.
     checkpoint: e.g. best_acc_top1_epoch_5.pth or epoch_100.onnx
     """
     try:
@@ -812,20 +811,29 @@ async def test_run(
         with open(video_path, "wb") as out:
             shutil.copyfileobj(file.file, out)
     elif test_video:
-        candidate = TEST_INPUT_DIR / test_video
-        if not candidate.exists():
+        # Only allow files under TEST_INPUT_DIR (never Label VIDEOS_DIR)
+        name = Path(test_video).name
+        if name != test_video or ".." in test_video or "/" in test_video or "\\" in test_video:
+            raise HTTPException(400, "Invalid test video name")
+        candidate = TEST_INPUT_DIR / name
+        if not candidate.exists() or not candidate.is_file():
             raise HTTPException(404, "Test video not found")
         video_path = candidate
-    elif video_id:
-        matches = list(config.VIDEOS_DIR.glob(f"{video_id}.*"))
-        if not matches:
-            raise HTTPException(404, "Library video not found")
-        video_path = matches[0]
     else:
-        raise HTTPException(400, "Provide file, test_video, or video_id")
+        raise HTTPException(400, "Provide file or test_video")
 
     result = start_inference_job(video_path, ckpt)
     return result
+
+
+@app.get("/api/test/inputs")
+def test_inputs(
+    page: int = 1,
+    per_page: int = 50,
+    q: Optional[str] = None,
+):
+    """List videos uploaded for Test (separate from Label library)."""
+    return list_test_inputs(page=page, per_page=per_page, q=q or "")
 
 
 @app.post("/api/test/live")

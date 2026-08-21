@@ -144,6 +144,53 @@ def _job_library_entry(job: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def list_test_inputs(
+    page: int = 1,
+    per_page: int = 50,
+    q: str = "",
+) -> Dict[str, Any]:
+    """List videos previously uploaded for Test (not Label library)."""
+    video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+    items: List[Dict[str, Any]] = []
+    if TEST_INPUT_DIR.exists():
+        for path in TEST_INPUT_DIR.iterdir():
+            if not path.is_file() or path.name.startswith("."):
+                continue
+            if path.suffix.lower() not in video_exts:
+                continue
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            items.append(
+                {
+                    "filename": path.name,
+                    "id": path.stem,
+                    "size": st.st_size,
+                    "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+                }
+            )
+    items.sort(key=lambda x: x["mtime"], reverse=True)
+
+    query = (q or "").strip().lower()
+    if query:
+        items = [it for it in items if query in it["filename"].lower() or query in it["id"].lower()]
+
+    total = len(items)
+    per_page = max(1, min(per_page, 200))
+    page = max(1, page)
+    start = (page - 1) * per_page
+    page_items = items[start : start + per_page]
+    pages = max(1, (total + per_page - 1) // per_page) if total else 1
+    return {
+        "videos": page_items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": pages,
+    }
+
+
 def list_test_library(
     page: int = 1,
     per_page: int = 50,

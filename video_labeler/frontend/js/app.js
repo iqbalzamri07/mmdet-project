@@ -1253,6 +1253,7 @@
     libraryPage: 1,
     libraryResults: [],
     libraryPaging: { total: 0, pages: 1 },
+    libVideo: null,
   };
 
   function formatTestDate(iso) {
@@ -1394,33 +1395,97 @@
   $("srcLibrary")?.addEventListener("click", () => setTestSource("library"));
   $("srcCamera").onclick = () => setTestSource("camera");
 
-  async function loadTestLibraryVideos(q = "") {
-    const sel = $("testLibrarySelect");
-    if (!sel) return;
-    const prev = sel.value;
-    const qs = new URLSearchParams({ per_page: "80", page: "1" });
-    if (q.trim()) qs.set("q", q.trim());
-    const data = await api(`/api/videos?${qs}`);
-    const videos = data.videos || [];
-    const total = data.total ?? videos.length;
-    sel.innerHTML = "";
-    if (!videos.length) {
-      sel.innerHTML = '<option value="">No matches</option>';
-      $("testLibraryHint").textContent = q.trim()
-        ? "No videos match that search."
-        : "Upload videos in the Label tab first.";
+  function updateTestLibSelectionUI() {
+    const v = testState.libVideo;
+    const card = $("testLibSelected");
+    const btn = $("btnRunTestLibrary");
+    if (!card || !btn) return;
+    if (!v) {
+      card.hidden = true;
+      btn.disabled = true;
+      btn.textContent = "Run inference";
       return;
     }
-    videos.forEach((v) => {
-      const opt = document.createElement("option");
-      opt.value = v.id;
-      const segs = v.segments || 0;
-      opt.textContent = `${v.filename}${segs ? ` · ${segs} seg` : ""}`;
-      sel.appendChild(opt);
+    card.hidden = false;
+    $("testLibSelectedName").textContent = v.filename;
+    $("testLibSelectedMeta").textContent = v.meta || "Test upload";
+    btn.disabled = false;
+    btn.textContent = "Run on selected video";
+  }
+
+  function formatBytes(n) {
+    if (!n && n !== 0) return "";
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function selectTestLibVideo(video) {
+    testState.libVideo = video
+      ? {
+          filename: video.filename,
+          id: video.id,
+          meta: [formatBytes(video.size), formatTestDate(video.mtime)].filter(Boolean).join(" · "),
+        }
+      : null;
+    updateTestLibSelectionUI();
+    $("testLibraryList")
+      ?.querySelectorAll("li[data-id]")
+      .forEach((li) => {
+        li.classList.toggle("active", !!video && li.dataset.id === video.filename);
+      });
+  }
+
+  async function loadTestLibraryVideos(q = "") {
+    const list = $("testLibraryList");
+    if (!list) return;
+    const qs = new URLSearchParams({ per_page: "80", page: "1" });
+    if (q.trim()) qs.set("q", q.trim());
+    list.innerHTML = `<li class="video-group-empty">Loading…</li>`;
+    const data = await api(`/api/test/inputs?${qs}`);
+    const videos = data.videos || [];
+    const total = data.total ?? videos.length;
+    list.innerHTML = "";
+    if (!videos.length) {
+      list.innerHTML = `<li class="video-group-empty">${
+        q.trim() ? "No uploads match that search." : "No test uploads yet."
+      }</li>`;
+      $("testLibraryHint").textContent = q.trim()
+        ? "Try another search."
+        : "Use Upload first — those files appear here for re-run.";
+      updateTestLibSelectionUI();
+      return;
+    }
+    videos.forEach((v, i) => {
+      const li = document.createElement("li");
+      li.dataset.id = v.filename;
+      li.innerHTML = `
+        <div class="video-row">
+          <span class="video-num">${i + 1}</span>
+          <div class="video-info">
+            <div class="name" title="${escapeHtml(v.filename)}">${escapeHtml(v.filename)}</div>
+            <div class="meta">${formatBytes(v.size)} · ${formatTestDate(v.mtime)}</div>
+          </div>
+        </div>`;
+      if (testState.libVideo?.filename === v.filename) li.classList.add("active");
+      li.addEventListener("click", () => selectTestLibVideo(v));
+      li.addEventListener("dblclick", () => {
+        selectTestLibVideo(v);
+        $("btnRunTestLibrary")?.click();
+      });
+      list.appendChild(li);
     });
-    if (videos.some((v) => v.id === prev)) sel.value = prev;
-    const more = total > videos.length ? ` (showing ${videos.length} of ${total})` : "";
-    $("testLibraryHint").textContent = `${total} library video${total === 1 ? "" : "s"}${more} — no re-upload.`;
+    const more = total > videos.length ? ` · showing ${videos.length}` : "";
+    $("testLibraryHint").textContent = `${total} test upload${total === 1 ? "" : "s"}${more}`;
+    updateTestLibSelectionUI();
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
   }
 
   let testLibSearchTimer = null;
@@ -1434,6 +1499,8 @@
   $("btnRefreshTestLibVideos")?.addEventListener("click", () => {
     loadTestLibraryVideos($("testLibraryVideoSearch")?.value || "").catch((e) => toast(e.message, "error"));
   });
+
+  $("btnClearTestLib")?.addEventListener("click", () => selectTestLibVideo(null));
 
   async function startTestJob(formData, startingMsg) {
     $("testPill").textContent = "starting";
@@ -1712,20 +1779,20 @@
   $("btnRunTestLibrary")?.addEventListener("click", async () => {
     stopCamera();
     const checkpoint = $("modelSelect").value;
-    const videoId = $("testLibrarySelect")?.value;
+    const filename = testState.libVideo?.filename;
     if (!checkpoint) {
       toast("Select a model checkpoint", "error");
       return;
     }
-    if (!videoId) {
-      toast("Pick a library video", "error");
+    if (!filename) {
+      toast("Pick a test upload", "error");
       return;
     }
     try {
       const fd = new FormData();
       fd.append("checkpoint", checkpoint);
-      fd.append("video_id", videoId);
-      await startTestJob(fd, `Starting inference on library video…`);
+      fd.append("test_video", filename);
+      await startTestJob(fd, `Starting inference on ${filename}…`);
     } catch (err) {
       toast(err.message, "error");
       $("testPill").textContent = "failed";

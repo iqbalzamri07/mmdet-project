@@ -285,22 +285,34 @@
 
           <section class="sidebar-card hidden" id="panelTestLibrary">
             <div class="panel-head">
-              <h2>Library video</h2>
+              <h2>Test uploads</h2>
               <button class="linkish" id="btnRefreshTestLibVideos" type="button">Refresh</button>
             </div>
+            <p class="hint lib-pick-intro">Re-run a video you already uploaded for Test</p>
+
+            <div class="lib-pick-selected" id="testLibSelected" hidden>
+              <div class="lib-pick-selected-main">
+                <span class="lib-pick-label">Selected</span>
+                <strong class="lib-pick-name" id="testLibSelectedName">—</strong>
+                <span class="lib-pick-meta" id="testLibSelectedMeta"></span>
+              </div>
+              <button type="button" class="linkish" id="btnClearTestLib">Clear</button>
+            </div>
+
             <input
               id="testLibraryVideoSearch"
               class="video-search"
               type="search"
-              placeholder="Search library…"
+              placeholder="Search test uploads…"
               autocomplete="off"
             />
-            <label class="field block-field">
-              <span>Video</span>
-              <select id="testLibrarySelect" size="8"></select>
-            </label>
-            <p class="hint" id="testLibraryHint">Pick a video already in ActionMark - no re-upload.</p>
-            <button class="btn btn-accent btn-block" id="btnRunTestLibrary" type="button">
+
+            <div class="lib-pick-list-wrap">
+              <ul class="video-list lib-pick-list" id="testLibraryList"></ul>
+            </div>
+            <p class="hint" id="testLibraryHint">Upload a test video first (Upload tab).</p>
+
+            <button class="btn btn-accent btn-block" id="btnRunTestLibrary" type="button" disabled>
               Run inference
             </button>
           </section>
@@ -347,8 +359,8 @@
             <h2>Test your model</h2>
             <p class="empty-lead">Pick a checkpoint, then choose a source.</p>
             <ol class="howto-steps">
-              <li><strong>Upload</strong> a new video, or</li>
-              <li><strong>Library</strong> - run on a video already in ActionMark (no re-upload), or</li>
+              <li><strong>Upload</strong> a new test video, or</li>
+              <li><strong>Library</strong> — re-run a previous Test upload (not Label videos), or</li>
               <li><strong>Camera</strong> for live clips.</li>
             </ol>
             <p class="empty-tip">Results show person boxes with posture and activity. Open Results to replay past runs.</p>
