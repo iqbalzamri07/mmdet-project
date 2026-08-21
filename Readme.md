@@ -1,6 +1,10 @@
 # ActionMark
 
-Label videos, train SlowFast, and test posture + activity recognition with person boxes.
+Label videos, train SlowFast (multi-label posture + activity), and test with person boxes.
+
+Full product docs (Label · Test · Compare · collab · paths · API):
+
+→ **[video_labeler/README.md](video_labeler/README.md)**
 
 ## Install
 
@@ -25,7 +29,15 @@ pip install -r video_labeler/requirements.txt
 
 Open **http://127.0.0.1:8765**
 
-Full docs: [video_labeler/README.md](video_labeler/README.md)
+## What you get
+
+| Area | Features |
+|------|----------|
+| **Label** | Segments, crops, Need/Done library, Next video, crop size warning, shortcuts, save history, locks for multi-user |
+| **Train** | Export clips → SlowFast, epochs in UI, ONNX export |
+| **Test** | Upload / test-upload library / camera, Results browser, delete uploads & results, **Compare A vs B** checkpoints |
+
+Label library (`video_labeler/data/videos/`) and Test uploads (`video_labeler/data/tests/inputs/`) stay separate on purpose.
 
 ## Repository layout
 
@@ -38,4 +50,4 @@ Full docs: [video_labeler/README.md](video_labeler/README.md)
 | `checkpoints/` | Pretrained Faster R-CNN + SlowFast weights |
 | `data/actionmark_dataset/` | Exported training clips |
 | `data/custom_actions_videos_clean/` | Train/val lists for SlowFast |
-| `work_dirs/slowfast_multilabel/` | Your trained `.pth` checkpoints |
+| `work_dirs/slowfast_multilabel/` | Your trained `.pth` / `.onnx` checkpoints |
