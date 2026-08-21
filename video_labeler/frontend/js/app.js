@@ -853,6 +853,7 @@
     relayoutPlayers();
     renderSegments();
     toast(`Loaded ${meta.filename}`);
+    setMobilePanel("modeLabel", "stage");
   }
 
   async function saveAnnotations() {
@@ -1378,14 +1379,113 @@
   function setTestSource(source) {
     testState.source = source;
     $("srcVideo").classList.toggle("active", source === "video");
+    $("srcLibrary")?.classList.toggle("active", source === "library");
     $("srcCamera").classList.toggle("active", source === "camera");
     $("panelTestVideo").classList.toggle("hidden", source !== "video");
+    $("panelTestLibrary")?.classList.toggle("hidden", source !== "library");
     $("panelTestCamera").classList.toggle("hidden", source !== "camera");
-    if (source === "video") stopCamera();
+    if (source === "video" || source === "library") stopCamera();
+    if (source === "library") {
+      loadTestLibraryVideos($("testLibraryVideoSearch")?.value || "").catch((e) => toast(e.message, "error"));
+    }
   }
 
   $("srcVideo").onclick = () => setTestSource("video");
+  $("srcLibrary")?.addEventListener("click", () => setTestSource("library"));
   $("srcCamera").onclick = () => setTestSource("camera");
+
+  async function loadTestLibraryVideos(q = "") {
+    const sel = $("testLibrarySelect");
+    if (!sel) return;
+    const prev = sel.value;
+    const qs = new URLSearchParams({ per_page: "80", page: "1" });
+    if (q.trim()) qs.set("q", q.trim());
+    const data = await api(`/api/videos?${qs}`);
+    const videos = data.videos || [];
+    const total = data.total ?? videos.length;
+    sel.innerHTML = "";
+    if (!videos.length) {
+      sel.innerHTML = '<option value="">No matches</option>';
+      $("testLibraryHint").textContent = q.trim()
+        ? "No videos match that search."
+        : "Upload videos in the Label tab first.";
+      return;
+    }
+    videos.forEach((v) => {
+      const opt = document.createElement("option");
+      opt.value = v.id;
+      const segs = v.segments || 0;
+      opt.textContent = `${v.filename}${segs ? ` · ${segs} seg` : ""}`;
+      sel.appendChild(opt);
+    });
+    if (videos.some((v) => v.id === prev)) sel.value = prev;
+    const more = total > videos.length ? ` (showing ${videos.length} of ${total})` : "";
+    $("testLibraryHint").textContent = `${total} library video${total === 1 ? "" : "s"}${more} — no re-upload.`;
+  }
+
+  let testLibSearchTimer = null;
+  $("testLibraryVideoSearch")?.addEventListener("input", () => {
+    clearTimeout(testLibSearchTimer);
+    testLibSearchTimer = setTimeout(() => {
+      loadTestLibraryVideos($("testLibraryVideoSearch").value).catch((e) => toast(e.message, "error"));
+    }, 250);
+  });
+
+  $("btnRefreshTestLibVideos")?.addEventListener("click", () => {
+    loadTestLibraryVideos($("testLibraryVideoSearch")?.value || "").catch((e) => toast(e.message, "error"));
+  });
+
+  async function startTestJob(formData, startingMsg) {
+    $("testPill").textContent = "starting";
+    $("testPill").className = "status-pill running";
+    $("testLog").textContent = startingMsg;
+    const res = await fetch("/api/test/run", { method: "POST", body: formData });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || data.error || res.statusText);
+    }
+    testState.jobId = data.job.job_id;
+    toast("Inference started — this may take a few minutes");
+    if (testState.pollTimer) clearInterval(testState.pollTimer);
+    testState.pollTimer = setInterval(pollTest, 2500);
+    pollTest();
+    setMobilePanel("modeTest", "stage");
+  }
+
+  function setMobilePanel(layoutId, panel) {
+    const layout = $(layoutId);
+    if (!layout) return;
+    layout.classList.remove("mobile-panel-nav", "mobile-panel-stage", "mobile-panel-annotate");
+    layout.classList.add(`mobile-panel-${panel}`);
+    const switchId = layoutId === "modeTest" ? "mobileSwitchTest" : "mobileSwitchLabel";
+    const sw = $(switchId);
+    if (sw) {
+      sw.querySelectorAll(".mobile-switch-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.panel === panel);
+      });
+    }
+    // Annotate only useful when a video is open
+    if (layoutId === "modeLabel" && panel === "annotate" && !state.videoId) {
+      // still show annotate rail empty hint via CSS
+    }
+    relayoutPlayers();
+  }
+
+  function wireMobileSwitch(switchId, layoutId) {
+    $(switchId)?.querySelectorAll(".mobile-switch-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (layoutId === "modeLabel" && btn.dataset.panel === "annotate" && !state.videoId) {
+          toast("Pick a video first", "error");
+          setMobilePanel(layoutId, "nav");
+          return;
+        }
+        setMobilePanel(layoutId, btn.dataset.panel);
+      });
+    });
+  }
+
+  wireMobileSwitch("mobileSwitchLabel", "modeLabel");
+  wireMobileSwitch("mobileSwitchTest", "modeTest");
 
   function setMode(mode) {
     const isLabel = mode === "label";
@@ -1397,7 +1497,11 @@
     if (!isLabel) {
       loadModels();
       loadTestLibrary(true).catch(() => {});
+      if (testState.source === "library") {
+        loadTestLibraryVideos($("testLibraryVideoSearch")?.value || "").catch(() => {});
+      }
     }
+    setMobilePanel(isLabel ? "modeLabel" : "modeTest", "nav");
     relayoutPlayers();
   }
 
@@ -1554,6 +1658,7 @@
     $("liveStack").classList.add("hidden");
     $("resultStack").classList.remove("hidden");
     $("btnDownloadResult").classList.remove("hidden");
+    setMobilePanel("modeTest", "stage");
     const url = `/api/test/result/${job.job_id}/video?t=${Date.now()}`;
     const vid = $("resultVideo");
     vid.src = url;
@@ -1593,25 +1698,10 @@
       return;
     }
     try {
-      $("testPill").textContent = "starting";
-      $("testPill").className = "status-pill running";
-      $("testLog").textContent = "Uploading and starting inference…";
       const fd = new FormData();
       fd.append("file", testState.file);
       fd.append("checkpoint", checkpoint);
-      const res = await fetch("/api/test/run", {
-        method: "POST",
-        body: fd,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.detail || data.error || res.statusText);
-      }
-      testState.jobId = data.job.job_id;
-      toast("Inference started — this may take a few minutes");
-      if (testState.pollTimer) clearInterval(testState.pollTimer);
-      testState.pollTimer = setInterval(pollTest, 2500);
-      pollTest();
+      await startTestJob(fd, "Uploading and starting inference…");
     } catch (err) {
       toast(err.message, "error");
       $("testPill").textContent = "failed";
@@ -1619,12 +1709,37 @@
     }
   };
 
+  $("btnRunTestLibrary")?.addEventListener("click", async () => {
+    stopCamera();
+    const checkpoint = $("modelSelect").value;
+    const videoId = $("testLibrarySelect")?.value;
+    if (!checkpoint) {
+      toast("Select a model checkpoint", "error");
+      return;
+    }
+    if (!videoId) {
+      toast("Pick a library video", "error");
+      return;
+    }
+    try {
+      const fd = new FormData();
+      fd.append("checkpoint", checkpoint);
+      fd.append("video_id", videoId);
+      await startTestJob(fd, `Starting inference on library video…`);
+    } catch (err) {
+      toast(err.message, "error");
+      $("testPill").textContent = "failed";
+      $("testPill").className = "status-pill failed";
+    }
+  });
+
   function showLiveStage() {
     $("testEmpty").classList.add("hidden");
     $("testActive").classList.remove("hidden");
     $("resultStack").classList.add("hidden");
     $("liveStack").classList.remove("hidden");
     $("btnDownloadResult").classList.add("hidden");
+    setMobilePanel("modeTest", "stage");
     relayoutPlayers();
   }
 

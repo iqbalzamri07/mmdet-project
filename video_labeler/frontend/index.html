@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ActionMark — Label · Train · Test</title>
+  <title>ActionMark - Label · Train · Test</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -27,7 +27,12 @@
     </header>
 
     <!-- LABEL MODE -->
-    <main class="layout layout-label" id="modeLabel">
+    <main class="layout layout-label mobile-panel-nav" id="modeLabel">
+      <nav class="mobile-switch" id="mobileSwitchLabel" aria-label="Label panels">
+        <button type="button" class="mobile-switch-btn active" data-panel="nav">Videos</button>
+        <button type="button" class="mobile-switch-btn" data-panel="stage">Player</button>
+        <button type="button" class="mobile-switch-btn" data-panel="annotate">Annotate</button>
+      </nav>
       <aside class="nav-rail">
         <nav class="nav-tabs" aria-label="Sidebar">
           <button type="button" class="nav-tab active" id="navTabVideos">Videos</button>
@@ -120,9 +125,17 @@
 
       <section class="center-stage">
         <div class="stage stage-fill" id="stageEmpty">
-          <div class="empty-state">
-            <h2>Select a video</h2>
-            <p>Pick a video from the list on the left, then use the Annotate panel on the right to mark segments.</p>
+          <div class="empty-state empty-guide">
+            <h2>How to label</h2>
+            <p class="empty-lead">Follow these steps with your teammate. Split videos - don’t edit the same one at once.</p>
+            <ol class="howto-steps">
+              <li><strong>Set your name</strong> in the Videos panel (so locks and save history show who labeled).</li>
+              <li><strong>Pick a video</strong> from Need (or Done to review).</li>
+              <li><strong>Choose posture + activity</strong> (e.g. standing + smoking).</li>
+              <li><strong>Mark start / end</strong> on the timeline, then <strong>Draw crop</strong> tightly around one person.</li>
+              <li><strong>Save segment</strong>, repeat if needed, then <strong>Save all</strong>.</li>
+            </ol>
+            <p class="empty-tip">Tip: one person per crop. If someone walks into the box, shorten the segment or redraw.</p>
           </div>
         </div>
 
@@ -179,7 +192,7 @@
               <button class="btn btn-ghost" id="btnMarkStart" type="button">Mark start</button>
               <button class="btn btn-ghost" id="btnMarkEnd" type="button">Mark end</button>
             </div>
-            <div class="pending" id="pendingInfo">Start: — · End: —</div>
+            <div class="pending" id="pendingInfo">Start: - · End: -</div>
             <button class="btn btn-primary btn-block" id="btnSaveSeg" type="button">Save segment</button>
           </section>
 
@@ -221,7 +234,11 @@
     </main>
 
     <!-- TEST MODE -->
-    <main class="layout layout-test hidden" id="modeTest">
+    <main class="layout layout-test hidden mobile-panel-nav" id="modeTest">
+      <nav class="mobile-switch" id="mobileSwitchTest" aria-label="Test panels">
+        <button type="button" class="mobile-switch-btn active" data-panel="nav">Controls</button>
+        <button type="button" class="mobile-switch-btn" data-panel="stage">Player</button>
+      </nav>
       <aside class="nav-rail test-nav-rail">
         <nav class="nav-tabs" aria-label="Test sidebar">
           <button type="button" class="nav-tab active" id="testNavRun">Run</button>
@@ -246,21 +263,44 @@
               <h2>Source</h2>
             </div>
             <div class="source-tabs">
-              <button type="button" class="mode-tab active" id="srcVideo">Video file</button>
+              <button type="button" class="mode-tab active" id="srcVideo">Upload</button>
+              <button type="button" class="mode-tab" id="srcLibrary">Library</button>
               <button type="button" class="mode-tab" id="srcCamera">Camera</button>
             </div>
           </section>
 
           <section class="sidebar-card" id="panelTestVideo">
             <div class="panel-head">
-              <h2>Test video</h2>
+              <h2>Upload test video</h2>
             </div>
             <label class="btn btn-primary file-btn btn-block">
-              Upload test video
+              Choose file
               <input type="file" id="testFileInput" accept="video/*" hidden />
             </label>
             <p class="hint" id="testFileName">No file selected</p>
             <button class="btn btn-accent btn-block" id="btnRunTest" type="button">
+              Run inference
+            </button>
+          </section>
+
+          <section class="sidebar-card hidden" id="panelTestLibrary">
+            <div class="panel-head">
+              <h2>Library video</h2>
+              <button class="linkish" id="btnRefreshTestLibVideos" type="button">Refresh</button>
+            </div>
+            <input
+              id="testLibraryVideoSearch"
+              class="video-search"
+              type="search"
+              placeholder="Search library…"
+              autocomplete="off"
+            />
+            <label class="field block-field">
+              <span>Video</span>
+              <select id="testLibrarySelect" size="8"></select>
+            </label>
+            <p class="hint" id="testLibraryHint">Pick a video already in ActionMark - no re-upload.</p>
+            <button class="btn btn-accent btn-block" id="btnRunTestLibrary" type="button">
               Run inference
             </button>
           </section>
@@ -303,9 +343,15 @@
 
       <section class="workspace workspace-test">
         <div class="stage stage-fill" id="testEmpty">
-          <div class="empty-state">
-            <h2>Test your trained model</h2>
-            <p>Select a .pth or ONNX SlowFast checkpoint, then upload a video or start the camera. Results show person boxes with posture and activity.</p>
+          <div class="empty-state empty-guide">
+            <h2>Test your model</h2>
+            <p class="empty-lead">Pick a checkpoint, then choose a source.</p>
+            <ol class="howto-steps">
+              <li><strong>Upload</strong> a new video, or</li>
+              <li><strong>Library</strong> - run on a video already in ActionMark (no re-upload), or</li>
+              <li><strong>Camera</strong> for live clips.</li>
+            </ol>
+            <p class="empty-tip">Results show person boxes with posture and activity. Open Results to replay past runs.</p>
           </div>
         </div>
 
