@@ -265,6 +265,7 @@
     if (!needVideos.length && !hasVideos.length && !total_all) {
       needList.innerHTML = '<li class="meta">No videos yet</li>';
       hasList.innerHTML = "";
+      renderActiveEditors();
       return;
     }
     if (!needVideos.length) {
@@ -298,6 +299,7 @@
       };
       hasList.appendChild(btn);
     }
+    renderActiveEditors();
   }
 
   async function deleteVideo(id, filename) {
@@ -657,8 +659,10 @@
       state.locks[videoId] = {
         client_id: data.lock.client_id,
         name: data.lock.name,
+        filename: data.lock.filename || "",
       };
     }
+    renderActiveEditors();
     return data;
   }
 
@@ -690,11 +694,75 @@
   function applyLocks(locks) {
     const map = {};
     (locks || []).forEach((l) => {
-      map[l.video_id] = { client_id: l.client_id, name: l.name };
+      map[l.video_id] = {
+        client_id: l.client_id,
+        name: l.name,
+        filename: l.filename || "",
+      };
     });
     state.locks = map;
     renderVideoList();
+    renderActiveEditors();
     updateLockPill();
+  }
+
+  function resolveLockFilename(videoId, lock) {
+    if (lock?.filename) return lock.filename;
+    const hit = (state.videos || []).find((v) => v.id === videoId);
+    return hit?.filename || videoId;
+  }
+
+  function renderActiveEditors() {
+    const wrap = $("activeEditors");
+    const list = $("activeEditorsList");
+    if (!wrap || !list) return;
+    const entries = Object.entries(state.locks || {});
+    if (!entries.length) {
+      wrap.hidden = true;
+      list.innerHTML = "";
+      return;
+    }
+    wrap.hidden = false;
+    list.innerHTML = "";
+    entries
+      .sort((a, b) => {
+        const aMine = a[1].client_id === state.clientId ? 0 : 1;
+        const bMine = b[1].client_id === state.clientId ? 0 : 1;
+        if (aMine !== bMine) return aMine - bMine;
+        return resolveLockFilename(a[0], a[1]).localeCompare(resolveLockFilename(b[0], b[1]));
+      })
+      .forEach(([videoId, lock]) => {
+        const mine = lock.client_id === state.clientId;
+        const li = document.createElement("li");
+        if (mine) li.classList.add("mine");
+        const file = resolveLockFilename(videoId, lock);
+        li.innerHTML = `
+          <span class="ae-who">${mine ? "You" : lock.name || "Someone"}</span>
+          <span class="ae-file" title="${file}">${file}</span>`;
+        li.onclick = () => {
+          // Switch to the right tab and try to open / highlight
+          const v = (state.videos || []).find((x) => x.id === videoId);
+          if (v) {
+            setLibraryTab(v.segments > 0 ? "has" : "need");
+          }
+          if (mine || !state.locks[videoId] || state.locks[videoId].client_id === state.clientId) {
+            selectVideo(videoId).catch((e) => toast(e.message, "error"));
+          } else {
+            toast(`Locked by ${lock.name || "someone"} — ${file}`, "ok");
+            // Scroll list item into view if present
+            requestAnimationFrame(() => {
+              const rows = document.querySelectorAll(".video-list li.active, .video-list li.locked-by-other");
+              // Find by filename text
+              document.querySelectorAll(".video-list .name").forEach((el) => {
+                if (el.getAttribute("title") === file || el.textContent === file) {
+                  el.closest("li")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                }
+              });
+            });
+          }
+        };
+        list.appendChild(li);
+      });
   }
 
   async function pollCollabStatus() {

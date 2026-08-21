@@ -610,9 +610,23 @@ def collab_hello(req: CollabHelloRequest = CollabHelloRequest()):
     }
 
 
+def _enrich_locks(locks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Attach filename to lock entries for the Currently editing panel."""
+    out = []
+    for lock in locks or []:
+        item = dict(lock)
+        vid = item.get("video_id") or ""
+        matches = list(config.VIDEOS_DIR.glob(f"{vid}.*")) if vid else []
+        item["filename"] = matches[0].name if matches else vid
+        out.append(item)
+    return out
+
+
 @app.get("/api/collab/status")
 def api_collab_status(since: int = 0):
-    return collab_status(since=since)
+    data = collab_status(since=since)
+    data["locks"] = _enrich_locks(data.get("locks") or [])
+    return data
 
 
 @app.post("/api/collab/lock/{video_id}")
@@ -620,6 +634,8 @@ def api_collab_lock(video_id: str, req: CollabLockRequest):
     result = acquire_lock(video_id, req.client_id, req.name or "")
     if not result.get("ok"):
         raise HTTPException(409, result.get("error", "Locked"))
+    if result.get("lock"):
+        result["lock"]["filename"] = _enrich_locks([result["lock"]])[0].get("filename")
     return result
 
 
@@ -633,7 +649,9 @@ def api_collab_unlock(video_id: str, client_id: str):
 
 @app.post("/api/collab/heartbeat")
 def api_collab_heartbeat(req: CollabHeartbeatRequest):
-    return heartbeat(req.client_id, req.video_id, req.name or "")
+    data = heartbeat(req.client_id, req.video_id, req.name or "")
+    data["locks"] = _enrich_locks(data.get("locks") or [])
+    return data
 
 
 @app.post("/api/collab/bye")
