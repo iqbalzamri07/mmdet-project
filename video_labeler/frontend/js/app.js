@@ -308,17 +308,7 @@
     try {
       await api(`/api/videos/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (state.videoId === id) {
-        await releaseCurrentLock();
-        state.videoId = null;
-        state.meta = null;
-        state.segments = [];
-        videoEl.removeAttribute("src");
-        videoEl.load();
-        $("stageActive").classList.add("hidden");
-        $("stageEmpty").classList.remove("hidden");
-        $("segmentsPanel").classList.add("hidden");
-        $("modeLabel")?.classList.remove("segments-open");
-        updateLockPill();
+        await clearVideoSelection({ silent: true });
       }
       await loadVideos();
       await loadLabelCounts();
@@ -795,8 +785,43 @@
     pollCollabStatus();
   }
 
+  async function clearVideoSelection({ silent = false } = {}) {
+    const hadVideo = !!state.videoId;
+    if (state.lockHeartbeatTimer) {
+      clearInterval(state.lockHeartbeatTimer);
+      state.lockHeartbeatTimer = null;
+    }
+    await releaseCurrentLock();
+    state.videoId = null;
+    state.meta = null;
+    state.segments = [];
+    state.pendingStart = null;
+    state.pendingEnd = null;
+    state.cropDraft = null;
+    state.drawing = false;
+    updateCropWarn();
+    updatePending();
+    videoEl.pause();
+    videoEl.removeAttribute("src");
+    videoEl.load();
+    $("stageActive").classList.add("hidden");
+    $("stageEmpty").classList.remove("hidden");
+    $("segmentsPanel").classList.add("hidden");
+    $("modeLabel")?.classList.remove("segments-open");
+    updateLabelLayout();
+    updateLockPill();
+    renderAnnotateMeta(null);
+    renderVideoList();
+    renderActiveEditors();
+    setMobilePanel("modeLabel", "nav");
+    if (hadVideo && !silent) toast("Video deselected");
+  }
+
   async function selectVideo(id) {
-    if (state.videoId === id) return;
+    if (state.videoId === id) {
+      await clearVideoSelection();
+      return;
+    }
 
     const previousId = state.videoId;
     try {
