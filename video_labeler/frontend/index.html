@@ -202,12 +202,14 @@
               <button class="btn btn-ghost" id="btnToggleCrop" type="button">Draw crop</button>
               <button class="btn btn-ghost" id="btnClearCrop" type="button">Clear</button>
             </div>
+            <p class="crop-warn" id="cropWarn" hidden role="status"></p>
           </section>
 
           <section class="annotate-block annotate-block-fill">
-            <div class="block-head">
-              <h3 class="block-label">Saved segments</h3>
-              <button class="btn btn-small btn-ghost" id="btnSaveAll" type="button">Save all</button>
+            <h3 class="block-label">Saved segments</h3>
+            <div class="seg-actions" role="group" aria-label="Segment actions">
+              <button class="btn btn-ghost" id="btnSaveAll" type="button">Save all</button>
+              <button class="btn btn-primary" id="btnNextUnlabeled" type="button" title="Open next video that still needs labels">Next video</button>
             </div>
             <div class="seg-table-wrap">
               <table class="seg-table seg-table-rail">
@@ -224,6 +226,17 @@
               </table>
             </div>
           </section>
+
+          <details class="shortcuts-sheet annotate-block">
+            <summary>Keyboard shortcuts</summary>
+            <dl class="shortcut-list">
+              <div><dt>Space</dt><dd>Play / pause</dd></div>
+              <div><dt>← →</dt><dd>Prev / next frame</dd></div>
+              <div><dt>S</dt><dd>Mark start</dd></div>
+              <div><dt>E</dt><dd>Mark end</dd></div>
+              <div><dt>Enter</dt><dd>Save segment</dd></div>
+            </dl>
+          </details>
 
           <section class="annotate-block annotate-log-block">
             <h3 class="block-label">Save history</h3>

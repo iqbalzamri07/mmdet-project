@@ -818,6 +818,7 @@
     state.pendingStart = null;
     state.pendingEnd = null;
     state.cropDraft = null;
+    updateCropWarn();
     updatePending();
     $("stageEmpty").classList.add("hidden");
     $("stageActive").classList.remove("hidden");
@@ -856,7 +857,7 @@
     setMobilePanel("modeLabel", "stage");
   }
 
-  async function saveAnnotations() {
+  async function saveAnnotations({ offerNext = false } = {}) {
     if (!state.videoId || !state.meta) return;
     persistCollabName();
     const annotator = collabDisplayName();
@@ -883,7 +884,13 @@
     renderAnnotateMeta(state.meta);
     await loadVideos();
     await loadLabelCounts();
-    toast(`Saved by ${annotator}`, "ok");
+    if (offerNext) {
+      toast(`Saved by ${annotator}. Click Next video to continue.`, "ok");
+      $("btnNextUnlabeled")?.classList.add("pulse-once");
+      setTimeout(() => $("btnNextUnlabeled")?.classList.remove("pulse-once"), 1800);
+    } else {
+      toast(`Saved by ${annotator}`, "ok");
+    }
   }
 
   // --- Events ---
@@ -1069,6 +1076,7 @@
       toast("Pick a posture (sitting or standing)", "error");
       return;
     }
+    const warn = cropWarnMessage(state.cropDraft);
     const seg = {
       id: Math.random().toString(36).slice(2, 10),
       posture,
@@ -1086,10 +1094,50 @@
     state.pendingEnd = null;
     updatePending();
     renderSegments();
-    toast(`Saved ${seg.label} ${start}–${end}`);
+    toast(
+      warn
+        ? `Saved ${seg.label} ${start}–${end} (crop looks large — prefer one person)`
+        : `Saved ${seg.label} ${start}–${end}`,
+      warn ? "error" : "ok"
+    );
   };
 
-  $("btnSaveAll").onclick = () => saveAnnotations().catch((e) => toast(e.message, "error"));
+  $("btnSaveAll").onclick = () =>
+    saveAnnotations({ offerNext: true }).catch((e) => toast(e.message, "error"));
+
+  async function goNextUnlabeled() {
+    try {
+      await loadVideos();
+      const need = (state.videos || []).filter((v) => !(v.segments > 0));
+      const available = need.filter((v) => {
+        if (v.id === state.videoId) return false;
+        const lock = state.locks?.[v.id];
+        if (!lock) return true;
+        return lock.client_id === state.clientId;
+      });
+      if (!available.length) {
+        toast("No unlabeled videos left (or all are locked)", "ok");
+        return;
+      }
+      const order = state.videos || [];
+      const curIdx = order.findIndex((v) => v.id === state.videoId);
+      let next =
+        curIdx >= 0
+          ? available.find((v) => order.findIndex((x) => x.id === v.id) > curIdx)
+          : null;
+      if (!next) next = available[0];
+      setNavTab("videos");
+      await selectVideo(next.id);
+      toast(`Opened next unlabeled: ${next.filename || next.id}`);
+      setMobilePanel("modeLabel", "stage");
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  }
+
+  $("btnNextUnlabeled")?.addEventListener("click", () => {
+    goNextUnlabeled();
+  });
 
   $("btnToggleCrop").onclick = () => {
     state.cropMode = !state.cropMode;
@@ -1102,8 +1150,49 @@
 
   $("btnClearCrop").onclick = () => {
     state.cropDraft = null;
+    updateCropWarn();
     drawOverlay();
   };
+
+  function frameSize() {
+    const w = state.meta?.width || videoEl.videoWidth || 0;
+    const h = state.meta?.height || videoEl.videoHeight || 0;
+    return { w, h };
+  }
+
+  function cropCoverage(draft) {
+    if (!draft) return 0;
+    const { w, h } = frameSize();
+    if (!w || !h) return 0;
+    const bw = Math.max(0, draft.x2 - draft.x1);
+    const bh = Math.max(0, draft.y2 - draft.y1);
+    return (bw * bh) / (w * h);
+  }
+
+  function cropWarnMessage(draft) {
+    if (!draft) return "";
+    const cov = cropCoverage(draft);
+    if (cov >= 0.7) {
+      return "Crop covers most of the frame — prefer a tight box around one person.";
+    }
+    if (cov >= 0.4) {
+      return "Crop looks large — try tighter around one person.";
+    }
+    return "";
+  }
+
+  function updateCropWarn() {
+    const el = $("cropWarn");
+    if (!el) return;
+    const msg = cropWarnMessage(state.cropDraft);
+    if (msg) {
+      el.hidden = false;
+      el.textContent = msg;
+    } else {
+      el.hidden = true;
+      el.textContent = "";
+    }
+  }
 
   overlay.addEventListener("mousedown", (e) => {
     if (!state.cropMode) return;
@@ -1128,7 +1217,14 @@
   });
 
   window.addEventListener("mouseup", () => {
-    state.drawing = false;
+    if (state.drawing) {
+      state.drawing = false;
+      updateCropWarn();
+      const msg = cropWarnMessage(state.cropDraft);
+      if (msg) toast(msg, "error");
+    } else {
+      state.drawing = false;
+    }
   });
 
   window.addEventListener("resize", relayoutPlayers);

@@ -698,6 +698,129 @@ html, body {
   margin: 0;
 }
 
+.block-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.seg-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+
+.seg-actions .btn {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.annotate-block-fill > .block-label {
+  margin-bottom: 8px;
+}
+
+.crop-warn {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff6e8;
+  border: 1px solid #f0d4a8;
+  color: #8a5a12;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.crop-warn[hidden] {
+  display: none !important;
+}
+
+@keyframes pulse-once {
+  0%,
+  100% {
+    box-shadow: none;
+  }
+  40% {
+    box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.35);
+  }
+}
+
+#btnNextUnlabeled.pulse-once {
+  animation: pulse-once 0.9s ease 2;
+}
+
+.shortcuts-sheet {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  flex-shrink: 0;
+}
+
+.shortcuts-sheet > summary {
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shortcuts-sheet > summary::-webkit-details-marker {
+  display: none;
+}
+
+.shortcuts-sheet > summary::before {
+  content: "▸";
+  font-size: 0.7rem;
+  color: var(--teal);
+}
+
+.shortcuts-sheet[open] > summary::before {
+  content: "▾";
+}
+
+.shortcut-list {
+  margin: 10px 0 0;
+  display: grid;
+  gap: 6px;
+}
+
+.shortcut-list > div {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 0.8rem;
+}
+
+.shortcut-list dt {
+  margin: 0;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  color: var(--teal-deep);
+  background: #eef7f6;
+  border-radius: 6px;
+  padding: 2px 6px;
+  text-align: center;
+}
+
+.shortcut-list dd {
+  margin: 0;
+  color: var(--muted);
+}
+
 .field-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
