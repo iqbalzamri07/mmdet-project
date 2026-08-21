@@ -1431,16 +1431,21 @@
       li.innerHTML = `
         <div class="video-row">
           <div class="video-info">
-            <div class="name" title="${name}">${name}</div>
-            <div class="meta">${formatTestDate(item.finished_at)} · ${item.checkpoint}</div>
+            <div class="name" title="${escapeHtml(name)}">${escapeHtml(name)}</div>
+            <div class="meta">${formatTestDate(item.finished_at)} · ${escapeHtml(item.checkpoint || "—")}</div>
             <div class="meta-line">
               <span class="badge done">${item.person_count} person${item.person_count === 1 ? "" : "s"}</span>
-              <span class="badge">${item.summary}</span>
+              <span class="badge">${escapeHtml(item.summary || "")}</span>
             </div>
           </div>
+          <button type="button" class="btn-delete-video" title="Delete result" aria-label="Delete result">×</button>
         </div>`;
       li.querySelector(".video-info").onclick = () => {
         selectTestResult(item.job_id).catch((e) => toast(e.message, "error"));
+      };
+      li.querySelector(".btn-delete-video").onclick = (e) => {
+        e.stopPropagation();
+        deleteTestResult(item.job_id, name).catch((err) => toast(err.message, "error"));
       };
       list.appendChild(li);
     });
@@ -1490,6 +1495,37 @@
     testState.jobId = jobId;
     showTestResult(data.job);
     renderTestLibrary();
+  }
+
+  async function deleteTestResult(jobId, label) {
+    const ok = window.confirm(`Delete result for "${label}"? This removes the output video.`);
+    if (!ok) return;
+    await api(`/api/test/result/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+    if (testState.jobId === jobId) {
+      testState.jobId = null;
+      if (testState.pollTimer) {
+        clearInterval(testState.pollTimer);
+        testState.pollTimer = null;
+      }
+      $("testActive")?.classList.add("hidden");
+      $("testEmpty")?.classList.remove("hidden");
+      $("testPill").textContent = "idle";
+      $("testPill").className = "status-pill";
+      $("testLog").textContent = "Result deleted.";
+    }
+    toast("Result deleted", "ok");
+    await loadTestLibrary(true);
+  }
+
+  async function deleteTestUpload(filename) {
+    const ok = window.confirm(`Delete test upload "${filename}"?`);
+    if (!ok) return;
+    await api(`/api/test/inputs/${encodeURIComponent(filename)}`, { method: "DELETE" });
+    if (testState.libVideo?.filename === filename) {
+      selectTestLibVideo(null);
+    }
+    toast("Test upload deleted", "ok");
+    await loadTestLibraryVideos($("testLibraryVideoSearch")?.value || "");
   }
 
   $("btnRefreshTestLibrary")?.addEventListener("click", () => {
@@ -1594,13 +1630,18 @@
             <div class="name" title="${escapeHtml(v.filename)}">${escapeHtml(v.filename)}</div>
             <div class="meta">${formatBytes(v.size)} · ${formatTestDate(v.mtime)}</div>
           </div>
+          <button type="button" class="btn-delete-video" title="Delete upload" aria-label="Delete ${escapeHtml(v.filename)}">×</button>
         </div>`;
       if (testState.libVideo?.filename === v.filename) li.classList.add("active");
-      li.addEventListener("click", () => selectTestLibVideo(v));
-      li.addEventListener("dblclick", () => {
+      li.querySelector(".video-info").onclick = () => selectTestLibVideo(v);
+      li.querySelector(".video-info").ondblclick = () => {
         selectTestLibVideo(v);
         $("btnRunTestLibrary")?.click();
-      });
+      };
+      li.querySelector(".btn-delete-video").onclick = (e) => {
+        e.stopPropagation();
+        deleteTestUpload(v.filename).catch((err) => toast(err.message, "error"));
+      };
       list.appendChild(li);
     });
     const more = total > videos.length ? ` · showing ${videos.length}` : "";

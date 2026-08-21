@@ -144,6 +144,65 @@ def _job_library_entry(job: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def delete_test_input(filename: str) -> Dict[str, Any]:
+    """Delete a previously uploaded test video from TEST_INPUT_DIR."""
+    name = Path(filename).name
+    if name != filename or ".." in filename or "/" in filename or "\\" in filename:
+        return {"ok": False, "error": "Invalid filename"}
+    path = TEST_INPUT_DIR / name
+    if not path.exists() or not path.is_file():
+        return {"ok": False, "error": "Test upload not found"}
+    try:
+        path.unlink()
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "filename": name}
+
+
+def delete_test_result(job_id: str) -> Dict[str, Any]:
+    """Delete a test job record and its output video."""
+    job_id = (job_id or "").strip()
+    if not job_id or "/" in job_id or "\\" in job_id or ".." in job_id:
+        return {"ok": False, "error": "Invalid job id"}
+    job = get_test_job(job_id)
+    if not job:
+        return {"ok": False, "error": "Result not found"}
+
+    removed: List[str] = []
+    out_path = Path(job.get("output_video") or TEST_OUTPUT_DIR / f"{job_id}.mp4")
+    # Only delete outputs that live under our test dirs
+    for candidate in (
+        out_path,
+        TEST_OUTPUT_DIR / f"{job_id}.mp4",
+        TEST_OUTPUT_DIR / f"{job_id}_raw.mp4",
+        TEST_OUTPUT_DIR / f"{job_id}.json",
+    ):
+        try:
+            resolved = candidate.resolve()
+            if (
+                resolved.exists()
+                and resolved.is_file()
+                and (
+                    str(resolved).startswith(str(TEST_OUTPUT_DIR.resolve()))
+                    or str(resolved).startswith(str(TEST_JOBS_DIR.resolve()))
+                )
+            ):
+                resolved.unlink()
+                removed.append(resolved.name)
+        except OSError:
+            continue
+
+    job_path = _job_path(job_id)
+    try:
+        if job_path.exists():
+            job_path.unlink()
+            removed.append(job_path.name)
+    except OSError as exc:
+        return {"ok": False, "error": str(exc), "removed": removed}
+
+    return {"ok": True, "job_id": job_id, "removed": removed}
+
+
 def list_test_inputs(
     page: int = 1,
     per_page: int = 50,

@@ -30,6 +30,8 @@ from .media import is_browser_playable, probe_codecs
 from .infer import (
     TEST_INPUT_DIR,
     TEST_OUTPUT_DIR,
+    delete_test_input,
+    delete_test_result,
     get_test_job,
     list_checkpoints,
     list_test_inputs,
@@ -834,6 +836,22 @@ def test_inputs(
 ):
     """List videos uploaded for Test (separate from Label library)."""
     return list_test_inputs(page=page, per_page=per_page, q=q or "")
+
+
+@app.delete("/api/test/inputs/{filename}")
+def test_input_delete(filename: str):
+    result = delete_test_input(filename)
+    if not result.get("ok"):
+        raise HTTPException(404 if "not found" in (result.get("error") or "").lower() else 400, result.get("error"))
+    return result
+
+
+@app.delete("/api/test/result/{job_id}")
+def test_result_delete(job_id: str):
+    result = delete_test_result(job_id)
+    if not result.get("ok"):
+        raise HTTPException(404 if "not found" in (result.get("error") or "").lower() else 400, result.get("error"))
+    return result
 
 
 @app.post("/api/test/live")
