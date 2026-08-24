@@ -17,8 +17,9 @@ JOBS_DIR = DATA_DIR / "jobs"
 TRAINING_VIDEOS_DIR = PROJECT_ROOT / "data" / "actionmark_dataset"
 CLEAN_VIDEOS_DIR = PROJECT_ROOT / "data" / "custom_actions_videos_clean"
 
-# Posture vs activity (a person can have both, e.g. standing + smoking)
-POSTURE_LABELS = ["sitting", "standing"]
+# Activity-only taxonomy.
+# (Historically this project also supported posture + activity, but we now train on activity only.)
+POSTURE_LABELS: list[str] = []
 ACTIVITY_LABELS = [
     "walking",
     "calling",
@@ -26,7 +27,7 @@ ACTIVITY_LABELS = [
     "smoking",
     "eating",
 ]
-ACTION_LABELS = POSTURE_LABELS + ACTIVITY_LABELS
+ACTION_LABELS = list(POSTURE_LABELS) + ACTIVITY_LABELS
 
 # Train / val split for export
 VAL_RATIO = 0.2
@@ -95,13 +96,10 @@ def is_activity(name: str) -> bool:
 
 
 def segment_class_names(seg: dict) -> list:
-    """Return unique class names for a segment (posture + activity)."""
+    """Return unique class names for a segment (activity-only)."""
     names = []
-    posture = (seg.get("posture") or "").strip()
     activity = (seg.get("activity") or "").strip()
     legacy = (seg.get("label") or "").strip()
-    if posture and posture in ACTION_LABELS:
-        names.append(posture)
     if activity and activity in ACTION_LABELS:
         names.append(activity)
     if not names and legacy:

@@ -162,28 +162,25 @@ def set_labels(payload: Dict[str, Any]):
     if activities is not None:
         activities = [l.strip().replace(" ", "_") for l in activities if str(l).strip()]
 
-    if not labels and not activities and not postures:
-        raise HTTPException(400, "labels cannot be empty")
+    # Activity-only now: ignore any posted posture list.
+    if not labels and not activities:
+        raise HTTPException(400, "activities cannot be empty")
 
-    if postures is None and activities is None:
-        # Flat list from older clients: keep known postures, rest are activities.
-        postures = [l for l in labels if l in config.POSTURE_LABELS] or list(config.POSTURE_LABELS)
-        activities = [l for l in labels if l not in postures]
-    elif activities is None:
-        activities = [l for l in labels if l not in (postures or [])]
-    elif postures is None:
-        postures = list(config.POSTURE_LABELS)
+    # Backward compat:
+    # - if older clients send `postures` and `activities`, keep only `activities`
+    # - if they send a flat `labels`, treat them as activities
+    if activities is None:
+        # Flattened/taxonomy-less payloads: treat everything as activity labels.
+        activities = labels
+    extras = [l for l in labels if l and l not in (activities or [])]
 
-    extras = [l for l in labels if l not in postures and l not in activities]
-    if not postures:
-        raise HTTPException(400, "Keep at least one posture")
-    config.POSTURE_LABELS = postures
-    config.ACTIVITY_LABELS = list(dict.fromkeys(activities + extras))
+    config.POSTURE_LABELS = []
+    config.ACTIVITY_LABELS = list(dict.fromkeys((activities or []) + extras))
     config.persist_label_taxonomy()
     return {
         "labels": config.ACTION_LABELS,
-        "postures": config.POSTURE_LABELS,
         "activities": config.ACTIVITY_LABELS,
+        "postures": config.POSTURE_LABELS,
     }
 
 
@@ -192,13 +189,12 @@ def delete_label(name: str):
     name = name.strip().replace(" ", "_")
     if not name:
         raise HTTPException(400, "Name is empty")
-    postures = [p for p in config.POSTURE_LABELS if p != name]
     activities = [a for a in config.ACTIVITY_LABELS if a != name]
-    if name not in config.POSTURE_LABELS and name not in config.ACTIVITY_LABELS:
+    if name not in config.ACTIVITY_LABELS:
         raise HTTPException(404, f"Unknown class: {name}")
-    if not postures:
-        raise HTTPException(400, "Keep at least one posture")
-    config.POSTURE_LABELS = postures
+    if not activities:
+        raise HTTPException(400, "activities cannot be empty")
+    config.POSTURE_LABELS = []
     config.ACTIVITY_LABELS = activities
     config.persist_label_taxonomy()
     return {
@@ -612,11 +608,24 @@ def get_video_meta(video_id: str):
         raise HTTPException(404, "Video not found")
     meta = _video_meta(matches[0])
     ann = load_annotation(video_id) or {}
+    # Activity-only: drop posture-only segments and strip posture field.
+    segs = ann.get("segments", []) or []
+    clean_segs = []
+    for s in segs:
+        if not isinstance(s, dict):
+            continue
+        names = config.segment_class_names(s)
+        if not names:
+            continue
+        # Remove posture in the API payload so the frontend never persists it again.
+        s = dict(s)
+        s.pop("posture", None)
+        clean_segs.append(s)
     return {
         "id": video_id,
         "filename": matches[0].name,
         **meta,
-        "segments": ann.get("segments", []),
+        "segments": clean_segs,
         "last_annotator": ann.get("last_annotator") or "",
         "updated_at": ann.get("updated_at") or "",
         "annotation_log": ann.get("annotation_log") or [],
@@ -641,7 +650,7 @@ def put_annotation(video_id: str, payload: AnnotationPayload):
     for seg in payload.segments:
         names = config.segment_class_names(seg.model_dump())
         if not names:
-            raise HTTPException(400, "Each segment needs a posture and/or activity")
+            raise HTTPException(400, "Each segment needs an activity")
         if seg.end_frame < seg.start_frame:
             raise HTTPException(400, "end_frame must be >= start_frame")
         # Keep a display label for older tools

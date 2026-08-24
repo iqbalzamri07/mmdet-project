@@ -3,7 +3,7 @@
 
   const state = {
     labels: [],
-    postures: ["sitting", "standing"],
+    postures: [],
     activities: [],
     counts: {},
     totalCount: 0,
@@ -58,40 +58,30 @@
     return data;
   }
 
-  function isPosture(name) {
-    return (state.postures || []).includes(name);
-  }
-
   function isActivity(name) {
     return (state.activities || []).includes(name);
   }
 
   function displayLabel(seg) {
-    const parts = [seg.posture, seg.activity].filter(Boolean);
-    if (parts.length) return parts.join(" + ");
-    return seg.label || "—";
+    const activity = (seg.activity || "").trim();
+    return activity || seg.label || "—";
   }
 
   function normalizeSeg(seg) {
+    // Activity-only: strip posture and ensure `label` matches `activity`.
     const next = { ...seg };
-    if (next.posture || next.activity) {
-      next.label = displayLabel(next);
-      return next;
+    delete next.posture;
+
+    // Prefer explicit `activity`, else try to recover from legacy `label` like "standing + walking".
+    let activity = (next.activity || "").trim();
+    if (!activity) {
+      const legacy = next.label || "";
+      const parts = legacy.split(/[+,]/).map((s) => s.trim()).filter(Boolean);
+      activity = parts.find((p) => isActivity(p)) || "";
     }
-    const legacy = next.label || "";
-    const parts = legacy
-      .split(/[+,]/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    parts.forEach((part) => {
-      if (isPosture(part) && !next.posture) next.posture = part;
-      else if (isActivity(part) && !next.activity) next.activity = part;
-    });
-    if (!next.posture && !next.activity && legacy) {
-      if (isPosture(legacy)) next.posture = legacy;
-      else next.activity = legacy;
-    }
-    next.label = displayLabel(next);
+
+    next.activity = activity;
+    next.label = activity || "";
     return next;
   }
 
@@ -139,10 +129,7 @@
   function renderLabels() {
     const chips = $("labelChips");
     chips.innerHTML = "";
-    const groups = [
-      { title: "Posture", items: state.postures || [] },
-      { title: "Activity", items: state.activities || [] },
-    ];
+    const groups = [{ title: "Activity", items: state.activities || [] }];
     groups.forEach((group) => {
       if (!group.items.length) return;
       const wrap = document.createElement("div");
@@ -155,12 +142,8 @@
       chips.appendChild(wrap);
     });
 
-    const postureSel = $("postureSelect");
     const activitySel = $("activitySelect");
-    if (postureSel) fillSelect(postureSel, state.postures || []);
-    if (activitySel) {
-      fillSelect(activitySel, state.activities || [], [{ value: "", label: "none" }]);
-    }
+    if (activitySel) fillSelect(activitySel, state.activities || [], [{ value: "", label: "none" }]);
     const totalEl = $("classCountTotal");
     if (totalEl) {
       const total = state.totalCount ?? Object.values(state.counts).reduce((a, b) => a + b, 0);
@@ -177,8 +160,8 @@
   async function loadLabelCounts() {
     const data = await api("/api/labels");
     state.labels = data.labels || [];
-    state.postures = data.postures || ["sitting", "standing"];
-    state.activities = data.activities || state.labels.filter((l) => !state.postures.includes(l));
+    state.postures = data.postures || [];
+    state.activities = data.activities || state.labels;
     state.counts = data.counts || {};
     state.totalCount = data.total || 0;
     renderLabels();
@@ -186,11 +169,7 @@
 
   async function removeClass(name) {
     const count = state.counts[name] || 0;
-    const kind = isPosture(name) ? "posture" : "activity";
-    if (isPosture(name) && (state.postures || []).length <= 1) {
-      toast("Keep at least one posture", "error");
-      return;
-    }
+    const kind = "activity";
     const extra = count ? ` It is used in ${count} segment${count === 1 ? "" : "s"} (those tags stay until you re-save).` : "";
     if (!window.confirm(`Remove ${kind} "${name}"?${extra}`)) return;
     try {
@@ -588,7 +567,6 @@
     state.editingSegIdx = idx;
     state.pendingStart = seg.start_frame;
     state.pendingEnd = seg.end_frame;
-    $("postureSelect").value = seg.posture || "";
     $("activitySelect").value = seg.activity || "";
     if (seg.bbox?.length === 4) {
       const [x1, y1, x2, y2] = seg.bbox.map(Number);
@@ -611,7 +589,6 @@
       const tr = document.createElement("tr");
       if (idx === state.editingSegIdx) tr.classList.add("editing");
       tr.innerHTML = `
-        <td>${seg.posture || "—"}</td>
         <td>${seg.activity || "—"}</td>
         <td>${seg.start_frame}</td>
         <td>${seg.end_frame}</td>
@@ -1352,10 +1329,6 @@
       toast("Label already exists", "error");
       return;
     }
-    if (isPosture(name)) {
-      toast("sitting and standing are postures, not activities", "error");
-      return;
-    }
     const labels = [...state.labels, name];
     const activities = [...(state.activities || []), name];
     try {
@@ -1364,7 +1337,6 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           labels,
-          postures: state.postures,
           activities,
         }),
       });
@@ -1428,10 +1400,9 @@
     let start = state.pendingStart;
     let end = state.pendingEnd;
     if (end < start) [start, end] = [end, start];
-    const posture = $("postureSelect").value;
     const activity = $("activitySelect").value;
-    if (!posture) {
-      toast("Pick a posture (sitting or standing)", "error");
+    if (!activity) {
+      toast("Pick an activity", "error");
       return;
     }
     const warn = cropWarnMessage(state.cropDraft);
@@ -1439,9 +1410,8 @@
     const prev = editing ? state.segments[state.editingSegIdx] : null;
     const seg = {
       id: prev?.id || Math.random().toString(36).slice(2, 10),
-      posture,
       activity,
-      label: [posture, activity].filter(Boolean).join(" + "),
+      label: activity,
       start_frame: start,
       end_frame: end,
       bbox: state.cropDraft
