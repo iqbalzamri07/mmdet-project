@@ -259,7 +259,8 @@
     list.appendChild(li);
   }
 
-  function renderVideoList() {
+  function renderVideoList({ preserveScroll = false } = {}) {
+    const scrollTop = preserveScroll ? captureLibraryScroll() : null;
     const needList = $("videoListNeed");
     const hasList = $("videoListHas");
     const countEl = $("libraryCount");
@@ -291,6 +292,11 @@
       needList.innerHTML = '<li class="meta">No videos yet</li>';
       hasList.innerHTML = "";
       renderActiveEditors();
+      if (preserveScroll && scrollTop != null) restoreLibraryScroll(scrollTop);
+      else if (_libraryScrollRestore != null) {
+        restoreLibraryScroll(_libraryScrollRestore);
+        _libraryScrollRestore = null;
+      }
       return;
     }
     if (!needVideos.length) {
@@ -325,7 +331,9 @@
       hasList.appendChild(btn);
     }
     renderActiveEditors();
-    if (_libraryScrollRestore != null) {
+    if (preserveScroll && scrollTop != null) {
+      restoreLibraryScroll(scrollTop);
+    } else if (_libraryScrollRestore != null) {
       restoreLibraryScroll(_libraryScrollRestore);
       _libraryScrollRestore = null;
     }
@@ -393,6 +401,14 @@
       hasPages: hasMeta?.pages || 1,
     };
     renderVideoList();
+    if (state.videoId && !state.videos.some((v) => v.id === state.videoId)) {
+      try {
+        await api(`/api/videos/${encodeURIComponent(state.videoId)}/meta`);
+      } catch {
+        await clearVideoSelection({ silent: true });
+        toast("This video was removed from the library", "ok");
+      }
+    }
   }
 
   async function deleteVideo(id, filename) {
@@ -777,7 +793,7 @@
         applyLocks(data.locks || []);
         if (typeof data.revision === "number" && data.revision > state.libraryRevision) {
           state.libraryRevision = data.revision;
-          await loadVideos();
+          await reloadVideosKeepingScroll();
         }
       } catch (_) {
         /* ignore transient errors */
@@ -795,7 +811,7 @@
       };
     });
     state.locks = map;
-    renderVideoList();
+    renderVideoList({ preserveScroll: true });
     renderActiveEditors();
     updateLockPill();
   }
@@ -866,8 +882,8 @@
       applyLocks(data.locks || []);
       if (data.changed && data.revision > state.libraryRevision) {
         state.libraryRevision = data.revision;
-        // Refresh library only — do not reload the open video player
-        await loadVideos();
+        // Refresh library only — keep scroll, loaded pages, and open video
+        await reloadVideosKeepingScroll();
       } else if (typeof data.revision === "number") {
         state.libraryRevision = data.revision;
       }
