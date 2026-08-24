@@ -104,6 +104,10 @@ class TrainRequest(BaseModel):
     epochs: int = Field(default=100, ge=1, le=300)
 
 
+class BulkDeleteRequest(BaseModel):
+    ids: List[str] = Field(default_factory=list, min_length=1)
+
+
 def _safe_stem(name: str) -> str:
     stem = Path(name).stem
     stem = re.sub(r"[^\w\-]+", "_", stem).strip("_")
@@ -534,24 +538,55 @@ def transcode_video(video_id: str):
         raise HTTPException(500, str(exc)) from exc
 
 
-@app.delete("/api/videos/{video_id}")
-def delete_video(video_id: str):
+def _delete_video_files(video_id: str) -> bool:
+    """Delete video file(s), annotation, and lock. Returns True if a video existed."""
     matches = list(config.VIDEOS_DIR.glob(f"{video_id}.*"))
     if not matches:
-        raise HTTPException(404, "Video not found")
+        return False
     for m in matches:
-        m.unlink()
+        m.unlink(missing_ok=True)
     ann = config.ANNOTATIONS_DIR / f"{video_id}.json"
     if ann.exists():
-        ann.unlink()
-    # Drop any lock on this video
+        ann.unlink(missing_ok=True)
     for lock in list(collab_status()["locks"]):
         if lock["video_id"] == video_id:
             release_lock(video_id, lock["client_id"])
             break
+    return True
+
+
+@app.delete("/api/videos/{video_id}")
+def delete_video(video_id: str):
+    if not _delete_video_files(video_id):
+        raise HTTPException(404, "Video not found")
     _get_video_index(force=True)
     bump_library_revision()
     return {"ok": True}
+
+
+@app.post("/api/videos/bulk-delete")
+def bulk_delete_videos(payload: BulkDeleteRequest):
+    deleted: List[str] = []
+    missing: List[str] = []
+    seen = set()
+    for video_id in payload.ids:
+        vid = (video_id or "").strip()
+        if not vid or vid in seen:
+            continue
+        seen.add(vid)
+        if _delete_video_files(vid):
+            deleted.append(vid)
+        else:
+            missing.append(vid)
+    if deleted:
+        _get_video_index(force=True)
+        bump_library_revision()
+    return {
+        "ok": True,
+        "deleted": deleted,
+        "missing": missing,
+        "count": len(deleted),
+    }
 
 
 @app.get("/api/videos/{video_id}/file")

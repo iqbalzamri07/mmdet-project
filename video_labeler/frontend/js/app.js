@@ -28,6 +28,7 @@
     collabName: localStorage.getItem("actionmark_name") || "",
     libraryRevision: 0,
     locks: {}, // video_id -> { name, client_id }
+    selectedVideos: new Set(),
     collabPollTimer: null,
     lockHeartbeatTimer: null,
   };
@@ -229,6 +230,7 @@
   function appendVideoItem(list, v, index) {
     const li = document.createElement("li");
     if (v.id === state.videoId) li.classList.add("active");
+    if (state.selectedVideos.has(v.id)) li.classList.add("selected");
     const lock = state.locks[v.id];
     const lockedByOther = lock && lock.client_id !== state.clientId;
     if (lockedByOther) li.classList.add("locked-by-other");
@@ -249,6 +251,9 @@
     }
     li.innerHTML = `
       <div class="video-row">
+        <label class="video-check" title="Select for bulk delete">
+          <input type="checkbox" data-video-id="${v.id}" ${state.selectedVideos.has(v.id) ? "checked" : ""} />
+        </label>
         <span class="video-num">${index}</span>
         <div class="video-info">
           <div class="name" title="${v.filename}">${v.filename}</div>
@@ -259,12 +264,77 @@
         </div>
         <button type="button" class="btn-delete-video" title="Delete video" aria-label="Delete ${v.filename}">×</button>
       </div>`;
+    const check = li.querySelector('input[type="checkbox"]');
+    check.onclick = (e) => e.stopPropagation();
+    check.onchange = () => {
+      if (check.checked) state.selectedVideos.add(v.id);
+      else state.selectedVideos.delete(v.id);
+      li.classList.toggle("selected", check.checked);
+      updateBulkBars();
+    };
     li.querySelector(".video-info").onclick = () => selectVideo(v.id);
     li.querySelector(".btn-delete-video").onclick = (e) => {
       e.stopPropagation();
       deleteVideo(v.id, v.filename);
     };
     list.appendChild(li);
+  }
+
+  function videosInTab(tab) {
+    if (tab === "has") return state.videos.filter((v) => v.segments > 0);
+    return state.videos.filter((v) => !(v.segments > 0));
+  }
+
+  function pruneSelectedVideos() {
+    const alive = new Set((state.videos || []).map((v) => v.id));
+    for (const id of [...state.selectedVideos]) {
+      if (!alive.has(id)) state.selectedVideos.delete(id);
+    }
+  }
+
+  function updateBulkBars() {
+    pruneSelectedVideos();
+    for (const tab of ["need", "has"]) {
+      const videos = videosInTab(tab);
+      const selected = videos.filter((v) => state.selectedVideos.has(v.id));
+      const countEl = $(tab === "need" ? "bulkCountNeed" : "bulkCountHas");
+      const clearBtn = $(tab === "need" ? "btnClearSelNeed" : "btnClearSelHas");
+      const delBtn = $(tab === "need" ? "btnDeleteSelNeed" : "btnDeleteSelHas");
+      const selectBtn = $(tab === "need" ? "btnSelectAllNeed" : "btnSelectAllHas");
+      if (countEl) {
+        countEl.textContent = selected.length
+          ? `${selected.length} selected`
+          : videos.length
+            ? ""
+            : "";
+      }
+      if (clearBtn) clearBtn.disabled = selected.length === 0;
+      if (delBtn) {
+        delBtn.disabled = selected.length === 0;
+        delBtn.textContent = selected.length ? `Delete (${selected.length})` : "Delete";
+      }
+      if (selectBtn) {
+        selectBtn.disabled = videos.length === 0;
+        const allSelected = videos.length > 0 && videos.every((v) => state.selectedVideos.has(v.id));
+        selectBtn.textContent = allSelected ? "Deselect all" : "Select all";
+      }
+    }
+  }
+
+  function selectAllInTab(tab) {
+    const videos = videosInTab(tab);
+    const allSelected = videos.length > 0 && videos.every((v) => state.selectedVideos.has(v.id));
+    if (allSelected) {
+      videos.forEach((v) => state.selectedVideos.delete(v.id));
+    } else {
+      videos.forEach((v) => state.selectedVideos.add(v.id));
+    }
+    renderVideoList({ preserveScroll: true });
+  }
+
+  function clearSelectionInTab(tab) {
+    videosInTab(tab).forEach((v) => state.selectedVideos.delete(v.id));
+    renderVideoList({ preserveScroll: true });
   }
 
   function renderVideoList({ preserveScroll = false } = {}) {
@@ -300,6 +370,7 @@
       needList.innerHTML = '<li class="meta">No videos yet</li>';
       hasList.innerHTML = "";
       renderActiveEditors();
+      updateBulkBars();
       if (preserveScroll && scrollTop != null) restoreLibraryScroll(scrollTop);
       else if (_libraryScrollRestore != null) {
         restoreLibraryScroll(_libraryScrollRestore);
@@ -339,6 +410,7 @@
       hasList.appendChild(btn);
     }
     renderActiveEditors();
+    updateBulkBars();
     if (preserveScroll && scrollTop != null) {
       restoreLibraryScroll(scrollTop);
     } else if (_libraryScrollRestore != null) {
@@ -426,11 +498,12 @@
     return lock.client_id === state.clientId;
   }
 
-  function pickNextVideoAfterDelete(deletedId) {
+  function pickNextVideoAfterDelete(deletedIds) {
+    const deleted = new Set(Array.isArray(deletedIds) ? deletedIds : [deletedIds]);
     const order = state.videos || [];
-    const available = order.filter((v) => v.id !== deletedId && isVideoSelectable(v));
+    const available = order.filter((v) => !deleted.has(v.id) && isVideoSelectable(v));
     if (!available.length) return null;
-    const curIdx = order.findIndex((v) => v.id === deletedId);
+    const curIdx = order.findIndex((v) => deleted.has(v.id) && v.id === state.videoId);
     const next =
       curIdx >= 0
         ? available.find((v) => order.findIndex((x) => x.id === v.id) > curIdx)
@@ -441,23 +514,48 @@
   async function deleteVideo(id, filename) {
     const ok = window.confirm(`Delete "${filename}" and its annotations?`);
     if (!ok) return;
+    await deleteVideosBulk([id]);
+  }
+
+  async function deleteSelectedInTab(tab) {
+    const ids = videosInTab(tab)
+      .filter((v) => state.selectedVideos.has(v.id))
+      .map((v) => v.id);
+    if (!ids.length) return;
+    const ok = window.confirm(
+      `Delete ${ids.length} video${ids.length === 1 ? "" : "s"} and their annotations? This cannot be undone.`
+    );
+    if (!ok) return;
+    await deleteVideosBulk(ids);
+  }
+
+  async function deleteVideosBulk(ids) {
+    if (!ids.length) return;
     try {
       _libraryScrollRestore = captureLibraryScroll();
-      const wasOpen = state.videoId === id;
-      const nextVideo = wasOpen ? pickNextVideoAfterDelete(id) : null;
-      await api(`/api/videos/${encodeURIComponent(id)}`, { method: "DELETE" });
-      state.videos = state.videos.filter((v) => v.id !== id);
+      const wasOpen = ids.includes(state.videoId);
+      const nextVideo = wasOpen ? pickNextVideoAfterDelete(ids) : null;
+      toast(`Deleting ${ids.length} video${ids.length === 1 ? "" : "s"}…`, "ok");
+      const data = await api("/api/videos/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const deleted = new Set(data.deleted || ids);
+      state.videos = state.videos.filter((v) => !deleted.has(v.id));
+      deleted.forEach((id) => state.selectedVideos.delete(id));
       await refreshVideoPagingCounts();
       renderVideoList();
       await loadLabelCounts();
+      const count = data.count ?? deleted.size;
       if (wasOpen && nextVideo) {
         await selectVideo(nextVideo.id);
-        toast(`Deleted · opened ${nextVideo.filename || nextVideo.id}`, "ok");
+        toast(`Deleted ${count} · opened ${nextVideo.filename || nextVideo.id}`, "ok");
       } else if (wasOpen) {
         await clearVideoSelection({ silent: true });
-        toast("Video deleted", "ok");
+        toast(`Deleted ${count} video${count === 1 ? "" : "s"}`, "ok");
       } else {
-        toast("Video deleted", "ok");
+        toast(`Deleted ${count} video${count === 1 ? "" : "s"}`, "ok");
       }
     } catch (err) {
       _libraryScrollRestore = null;
@@ -1226,6 +1324,13 @@
 
   $("libTabNeed")?.addEventListener("click", () => setLibraryTab("need"));
   $("libTabHas")?.addEventListener("click", () => setLibraryTab("has"));
+
+  $("btnSelectAllNeed")?.addEventListener("click", () => selectAllInTab("need"));
+  $("btnClearSelNeed")?.addEventListener("click", () => clearSelectionInTab("need"));
+  $("btnDeleteSelNeed")?.addEventListener("click", () => deleteSelectedInTab("need"));
+  $("btnSelectAllHas")?.addEventListener("click", () => selectAllInTab("has"));
+  $("btnClearSelHas")?.addEventListener("click", () => clearSelectionInTab("has"));
+  $("btnDeleteSelHas")?.addEventListener("click", () => deleteSelectedInTab("has"));
 
   let _searchTimer = null;
   $("videoSearch").addEventListener("input", (e) => {

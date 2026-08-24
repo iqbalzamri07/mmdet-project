@@ -67,10 +67,22 @@
           <div class="library-body" id="libraryBody">
             <div class="library-tab-panel active" id="libraryPanelNeed" role="tabpanel">
               <p class="library-tab-count" id="needLabelsTitle">0 videos</p>
+              <div class="library-bulk" id="bulkBarNeed">
+                <button type="button" class="btn btn-ghost btn-small" id="btnSelectAllNeed">Select all</button>
+                <button type="button" class="btn btn-ghost btn-small" id="btnClearSelNeed" disabled>Clear</button>
+                <button type="button" class="btn btn-ghost btn-small btn-bulk-delete" id="btnDeleteSelNeed" disabled>Delete</button>
+                <span class="library-bulk-count" id="bulkCountNeed"></span>
+              </div>
               <ul class="video-list" id="videoListNeed"></ul>
             </div>
             <div class="library-tab-panel" id="libraryPanelHas" role="tabpanel" hidden>
               <p class="library-tab-count" id="hasSegmentsTitle">0 videos</p>
+              <div class="library-bulk" id="bulkBarHas">
+                <button type="button" class="btn btn-ghost btn-small" id="btnSelectAllHas">Select all</button>
+                <button type="button" class="btn btn-ghost btn-small" id="btnClearSelHas" disabled>Clear</button>
+                <button type="button" class="btn btn-ghost btn-small btn-bulk-delete" id="btnDeleteSelHas" disabled>Delete</button>
+                <span class="library-bulk-count" id="bulkCountHas"></span>
+              </div>
               <ul class="video-list" id="videoListHas"></ul>
             </div>
           </div>

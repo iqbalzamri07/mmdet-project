@@ -1010,6 +1010,46 @@ html, body {
   color: var(--muted);
 }
 
+.library-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.library-bulk .btn-small {
+  padding: 4px 8px;
+  font-size: 0.72rem;
+}
+.library-bulk .btn-bulk-delete:not(:disabled) {
+  color: var(--coral);
+  border-color: #f0b4a6;
+}
+.library-bulk-count {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+.video-check {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 4px;
+  cursor: pointer;
+}
+.video-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--teal);
+  cursor: pointer;
+}
+.video-list li.selected {
+  border-color: #9fc7c2;
+  background: #f2faf8;
+}
+
 /* —— Video transport —— */
 .transport-bar .timecode {
   flex-shrink: 0;
