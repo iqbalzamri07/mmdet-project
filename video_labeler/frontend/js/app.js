@@ -240,6 +240,12 @@
     if (v.segments > 0 && v.last_annotator) {
       annotatorLine = `<div class="meta">Saved by ${v.last_annotator}${v.updated_at ? ` · ${formatAnnotateTime(v.updated_at)}` : ""}</div>`;
     }
+    let processingHtml = "";
+    if (v.processing_status === "transcoding") {
+      processingHtml = `<div class="lock-badge processing">Converting to H.264…</div>`;
+    } else if (v.processing_status === "failed") {
+      processingHtml = `<div class="lock-badge processing-failed">Convert failed</div>`;
+    }
     li.innerHTML = `
       <div class="video-row">
         <span class="video-num">${index}</span>
@@ -247,6 +253,7 @@
           <div class="name" title="${v.filename}">${v.filename}</div>
           <div class="meta">${Math.round(v.duration || 0)}s · ${v.segments || 0} segments · ${v.total_frames || 0} frames</div>
           ${annotatorLine}
+          ${processingHtml}
           ${lockHtml}
         </div>
         <button type="button" class="btn-delete-video" title="Delete video" aria-label="Delete ${v.filename}">×</button>
@@ -936,6 +943,12 @@
       return;
     }
 
+    const listed = (state.videos || []).find((v) => v.id === id);
+    if (listed?.processing_status === "transcoding") {
+      toast("This video is still converting — try again in a moment", "error");
+      return;
+    }
+
     const previousId = state.videoId;
     try {
       await ensureCollabClient();
@@ -1061,9 +1074,15 @@
     try {
       await loadVideos();
       const lastNew = uploaded[uploaded.length - 1];
-      if (lastNew?.video) {
+      if (lastNew?.video && files.length === 1 && !state.videoId) {
         setNavTab("videos");
-        await selectVideo(lastNew.video.id);
+        if (lastNew.processing || lastNew.video.processing_status === "transcoding") {
+          toast(lastNew.message || "Uploaded — converting in background", "ok");
+        } else {
+          await selectVideo(lastNew.video.id);
+        }
+      } else if (uploaded.length) {
+        await reloadVideosKeepingScroll();
       }
     } catch (err) {
       toast(err.message, "error");

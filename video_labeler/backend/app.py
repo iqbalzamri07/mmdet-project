@@ -27,6 +27,7 @@ from .export import (
     sync_train_config_labels,
 )
 from .media import is_browser_playable, probe_codecs
+from .transcode_queue import enqueue_video_transcode, is_transcode_pending
 from .infer import (
     TEST_INPUT_DIR,
     TEST_OUTPUT_DIR,
@@ -251,6 +252,7 @@ def _rebuild_video_index() -> List[Dict[str, Any]]:
             "segments": len(ann.get("segments", [])) if ann else 0,
             "last_annotator": (ann or {}).get("last_annotator") or "",
             "updated_at": (ann or {}).get("updated_at") or "",
+            "processing_status": (ann or {}).get("processing_status") or "ready",
             **meta,
         })
     _video_index_cache = index
@@ -352,27 +354,30 @@ def _ingest_uploaded_video(file: UploadFile) -> Dict[str, Any]:
     with open(raw_dest, "wb") as out:
         shutil.copyfileobj(file.file, out)
 
-    from .media import transcode_to_h264
-
     vcodec, _ = probe_codecs(raw_dest)
     final_path = config.VIDEOS_DIR / f"{stem}.mp4"
     converted = False
+    processing = False
     try:
         if is_browser_playable(raw_dest) and ext == ".mp4":
             raw_dest.replace(final_path)
+        elif is_browser_playable(raw_dest):
+            fallback = config.VIDEOS_DIR / f"{stem}{ext}"
+            raw_dest.replace(fallback)
+            final_path = fallback
         else:
-            # HEVC / exotic codecs → H.264 for Chrome/Firefox
-            transcode_to_h264(raw_dest, final_path)
-            converted = True
-            raw_dest.unlink(missing_ok=True)
+            # Defer heavy ffmpeg work — upload returns immediately
+            staging = config.VIDEOS_DIR / f"{stem}{ext}"
+            raw_dest.replace(staging)
+            final_path = staging
+            processing = True
     except Exception as exc:
-        # Fall back to original bytes if conversion fails
         if final_path.exists():
             final_path.unlink(missing_ok=True)
         fallback = config.VIDEOS_DIR / f"{stem}{ext}"
         raw_dest.replace(fallback)
         final_path = fallback
-        print(f"[upload] transcode failed, keeping original: {exc}")
+        print(f"[upload] ingest failed, keeping original: {exc}")
 
     meta = _video_meta(final_path)
     meta["codec"] = probe_codecs(final_path)[0]
@@ -386,15 +391,31 @@ def _ingest_uploaded_video(file: UploadFile) -> Dict[str, Any]:
         "segments": [],
         "created_at": datetime.utcnow().isoformat() + "Z",
     }
+    if processing:
+        ann["processing_status"] = "transcoding"
+        ann["processing_started_at"] = datetime.utcnow().isoformat() + "Z"
     save_annotation(stem, ann)
+    if processing:
+        enqueue_video_transcode(stem, final_path, config.VIDEOS_DIR / f"{stem}.mp4", vcodec or "")
     return {
         "ok": True,
-        "video": {"id": stem, "filename": final_path.name, **meta, "segments": 0},
+        "video": {
+            "id": stem,
+            "filename": final_path.name,
+            **meta,
+            "segments": 0,
+            "processing_status": ann.get("processing_status", "ready"),
+        },
         "converted_to_h264": converted,
+        "processing": processing,
         "message": (
-            f"Converted from {vcodec} to H.264 for browser playback"
-            if converted and vcodec
-            else None
+            "Uploaded — converting to H.264 in background (you can keep labeling other videos)"
+            if processing
+            else (
+                f"Converted from {vcodec} to H.264 for browser playback"
+                if converted and vcodec
+                else None
+            )
         ),
     }
 
@@ -450,10 +471,15 @@ async def upload_video(file: List[UploadFile] = File(...)):
 @app.post("/api/videos/{video_id}/transcode")
 def transcode_video(video_id: str):
     """Convert an existing library video to H.264 for browser playback."""
+    if is_transcode_pending(video_id):
+        raise HTTPException(409, "Video is already converting in the background")
     matches = sorted(config.VIDEOS_DIR.glob(f"{video_id}.*"))
     if not matches:
         raise HTTPException(404, "Video not found")
     src = matches[0]
+    ann = load_annotation(video_id) or {}
+    if ann.get("processing_status") == "transcoding":
+        raise HTTPException(409, "Video is already converting in the background")
     if is_browser_playable(src):
         return {"ok": True, "already_playable": True, "filename": src.name}
     try:
@@ -473,9 +499,12 @@ def transcode_video(video_id: str):
                 **meta,
                 "codec": probe_codecs(out)[0],
                 "converted_to_h264": True,
+                "processing_status": "ready",
             }
         )
+        ann.pop("processing_error", None)
         save_annotation(video_id, ann)
+        bump_library_revision()
         return {"ok": True, "video": {"id": video_id, "filename": out.name, **meta}}
     except Exception as exc:
         raise HTTPException(500, str(exc)) from exc
@@ -532,6 +561,8 @@ def get_video_meta(video_id: str):
         "last_annotator": ann.get("last_annotator") or "",
         "updated_at": ann.get("updated_at") or "",
         "annotation_log": ann.get("annotation_log") or [],
+        "processing_status": ann.get("processing_status") or "ready",
+        "processing_error": ann.get("processing_error") or "",
     }
 
 

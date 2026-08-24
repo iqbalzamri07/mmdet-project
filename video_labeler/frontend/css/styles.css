@@ -487,6 +487,16 @@ html, body {
   color: var(--teal-deep);
 }
 
+.video-list .lock-badge.processing {
+  background: #eef3ff;
+  color: #3b5bdb;
+}
+
+.video-list .lock-badge.processing-failed {
+  background: #fff0ee;
+  color: var(--coral);
+}
+
 .lock-pill {
   font-size: 0.72rem;
   font-weight: 600;
