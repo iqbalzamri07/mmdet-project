@@ -16,6 +16,7 @@
     segments: [],
     pendingStart: null,
     pendingEnd: null,
+    editingSegIdx: null,
     cropMode: false,
     cropDraft: null, // {x1,y1,x2,y2} in video pixel space
     drawing: false,
@@ -438,21 +439,71 @@
     }
   }
 
+  function updateSegmentEditorUI() {
+    const editing = state.editingSegIdx != null;
+    $("btnSaveSeg").textContent = editing ? "Update segment" : "Save segment";
+    $("btnCancelEdit").hidden = !editing;
+    $("pendingInfo").classList.toggle("editing-segment", editing);
+  }
+
+  function clearSegmentEdit() {
+    if (state.editingSegIdx == null) return;
+    state.editingSegIdx = null;
+    state.pendingStart = null;
+    state.pendingEnd = null;
+    state.cropDraft = null;
+    updateCropWarn();
+    updatePending();
+    updateSegmentEditorUI();
+    renderSegments();
+  }
+
+  function loadSegmentForEdit(idx) {
+    const seg = state.segments[idx];
+    if (!seg) return;
+    state.editingSegIdx = idx;
+    state.pendingStart = seg.start_frame;
+    state.pendingEnd = seg.end_frame;
+    $("postureSelect").value = seg.posture || "";
+    $("activitySelect").value = seg.activity || "";
+    if (seg.bbox?.length === 4) {
+      const [x1, y1, x2, y2] = seg.bbox.map(Number);
+      state.cropDraft = { x1, y1, x2, y2 };
+    } else {
+      state.cropDraft = null;
+    }
+    updateCropWarn();
+    updatePending();
+    updateSegmentEditorUI();
+    seekToFrame(seg.start_frame);
+    renderSegments();
+    toast(`Editing ${displayLabel(seg)} (${seg.start_frame}–${seg.end_frame})`);
+  }
+
   function renderSegments() {
     const body = $("segBody");
     body.innerHTML = "";
     state.segments.forEach((seg, idx) => {
       const tr = document.createElement("tr");
+      if (idx === state.editingSegIdx) tr.classList.add("editing");
       tr.innerHTML = `
         <td>${seg.posture || "—"}</td>
         <td>${seg.activity || "—"}</td>
         <td>${seg.start_frame}</td>
         <td>${seg.end_frame}</td>
-        <td><button type="button" data-idx="${idx}">Delete</button></td>`;
-      tr.querySelector("button").onclick = () => {
+        <td class="seg-row-actions">
+          <button type="button" class="seg-edit" data-idx="${idx}">Edit</button>
+          <button type="button" class="seg-delete" data-idx="${idx}">Delete</button>
+        </td>`;
+      tr.querySelector(".seg-edit").onclick = () => loadSegmentForEdit(idx);
+      tr.querySelector(".seg-delete").onclick = () => {
+        if (state.editingSegIdx === idx) state.editingSegIdx = null;
+        else if (state.editingSegIdx != null && idx < state.editingSegIdx) {
+          state.editingSegIdx -= 1;
+        }
         state.segments.splice(idx, 1);
+        updateSegmentEditorUI();
         renderSegments();
-        drawTimeline();
       };
       body.appendChild(tr);
     });
@@ -461,7 +512,9 @@
   }
 
   function updatePending() {
-    $("pendingInfo").textContent = `Start: ${state.pendingStart ?? "—"} · End: ${state.pendingEnd ?? "—"}`;
+    const base = `Start: ${state.pendingStart ?? "—"} · End: ${state.pendingEnd ?? "—"}`;
+    $("pendingInfo").textContent =
+      state.editingSegIdx != null ? `${base} · editing saved segment` : base;
   }
 
   function currentFrame() {
@@ -590,13 +643,14 @@
     el.innerHTML = "";
     if (!state.meta?.total_frames) return;
     const total = state.meta.total_frames;
-    state.segments.forEach((seg) => {
+    state.segments.forEach((seg, idx) => {
       const span = document.createElement("span");
       const left = (seg.start_frame / total) * 100;
       const width = Math.max(0.4, ((seg.end_frame - seg.start_frame + 1) / total) * 100);
       span.style.left = `${left}%`;
       span.style.width = `${width}%`;
       span.title = `${displayLabel(seg)} ${seg.start_frame}-${seg.end_frame}`;
+      if (idx === state.editingSegIdx) span.classList.add("editing");
       el.appendChild(span);
     });
   }
@@ -917,10 +971,12 @@
     state.segments = [];
     state.pendingStart = null;
     state.pendingEnd = null;
+    state.editingSegIdx = null;
     state.cropDraft = null;
     state.drawing = false;
     updateCropWarn();
     updatePending();
+    updateSegmentEditorUI();
     videoEl.pause();
     videoEl.removeAttribute("src");
     videoEl.load();
@@ -975,9 +1031,11 @@
     state.videoId = id;
     state.pendingStart = null;
     state.pendingEnd = null;
+    state.editingSegIdx = null;
     state.cropDraft = null;
     updateCropWarn();
     updatePending();
+    updateSegmentEditorUI();
     $("stageEmpty").classList.add("hidden");
     $("stageActive").classList.remove("hidden");
     $("segmentsPanel").classList.remove("hidden");
@@ -1226,6 +1284,11 @@
     updatePending();
   };
 
+  $("btnCancelEdit").onclick = () => {
+    clearSegmentEdit();
+    toast("Edit cancelled");
+  };
+
   $("btnSaveSeg").onclick = () => {
     if (state.pendingStart == null || state.pendingEnd == null) {
       toast("Mark start and end first", "error");
@@ -1241,8 +1304,10 @@
       return;
     }
     const warn = cropWarnMessage(state.cropDraft);
+    const editing = state.editingSegIdx != null;
+    const prev = editing ? state.segments[state.editingSegIdx] : null;
     const seg = {
-      id: Math.random().toString(36).slice(2, 10),
+      id: prev?.id || Math.random().toString(36).slice(2, 10),
       posture,
       activity,
       label: [posture, activity].filter(Boolean).join(" + "),
@@ -1251,17 +1316,26 @@
       bbox: state.cropDraft
         ? [state.cropDraft.x1, state.cropDraft.y1, state.cropDraft.x2, state.cropDraft.y2]
         : null,
-      note: "",
+      note: prev?.note || "",
     };
-    state.segments.push(seg);
+    if (editing) {
+      state.segments[state.editingSegIdx] = seg;
+      state.editingSegIdx = null;
+    } else {
+      state.segments.push(seg);
+    }
     state.pendingStart = null;
     state.pendingEnd = null;
+    state.cropDraft = null;
+    updateCropWarn();
     updatePending();
+    updateSegmentEditorUI();
     renderSegments();
+    const verb = editing ? "Updated" : "Saved";
     toast(
       warn
-        ? `Saved ${seg.label} ${start}–${end} (crop looks large — prefer one person)`
-        : `Saved ${seg.label} ${start}–${end}`,
+        ? `${verb} ${seg.label} ${start}–${end} (crop looks large — prefer one person)`
+        : `${verb} ${seg.label} ${start}–${end}`,
       warn ? "error" : "ok"
     );
   };

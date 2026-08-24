@@ -1966,6 +1966,26 @@ html, body {
   font-weight: 600;
   cursor: pointer;
 }
+.seg-table .seg-edit {
+  color: var(--teal-deep);
+}
+.seg-table .seg-row-actions {
+  white-space: nowrap;
+}
+.seg-table tr.editing {
+  background: rgba(0, 128, 128, 0.08);
+}
+.seg-table tr.editing td {
+  font-weight: 600;
+}
+.pending.editing-segment {
+  color: var(--teal-deep);
+  font-weight: 600;
+}
+.timeline-marks span.editing {
+  background: rgba(0, 128, 128, 0.75);
+  box-shadow: 0 0 0 1px rgba(0, 128, 128, 0.35);
+}
 
 .toast {
   position: fixed;
