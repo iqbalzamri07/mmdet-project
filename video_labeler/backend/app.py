@@ -216,6 +216,28 @@ _video_index_cache: List[Dict[str, Any]] = []
 _video_index_mtime: float = 0.0
 
 
+def _parse_iso_ts(value: str) -> float:
+    if not value:
+        return 0.0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _video_sort_ts(ann: Optional[Dict[str, Any]], path: Path) -> float:
+    ts = _parse_iso_ts((ann or {}).get("updated_at") or "")
+    if not ts:
+        ts = _parse_iso_ts((ann or {}).get("created_at") or "")
+    if not ts:
+        ts = path.stat().st_mtime
+    return ts
+
+
+def _video_sort_key(video: Dict[str, Any]) -> tuple:
+    return (video.get("sort_ts") or 0.0, video.get("filename") or video.get("id") or "")
+
+
 def _rebuild_video_index() -> List[Dict[str, Any]]:
     """Build a fast index from annotation JSONs + video directory."""
     global _video_index_cache, _video_index_mtime
@@ -252,6 +274,7 @@ def _rebuild_video_index() -> List[Dict[str, Any]]:
             "segments": len(ann.get("segments", [])) if ann else 0,
             "last_annotator": (ann or {}).get("last_annotator") or "",
             "updated_at": (ann or {}).get("updated_at") or "",
+            "sort_ts": _video_sort_ts(ann, path),
             "processing_status": (ann or {}).get("processing_status") or "ready",
             **meta,
         })
@@ -296,6 +319,7 @@ def list_videos(
         filtered = [v for v in filtered if v["segments"] > 0]
     elif labeled is False:
         filtered = [v for v in filtered if v["segments"] == 0]
+    filtered.sort(key=_video_sort_key, reverse=True)
     total = len(filtered)
     total_all = len(index)
     total_labeled = sum(1 for v in index if v["segments"] > 0)
