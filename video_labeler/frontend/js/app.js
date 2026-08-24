@@ -200,6 +200,31 @@
     }
   }
 
+  function getActiveVideoListEl() {
+    const panelHas = $("libraryPanelHas");
+    if (panelHas && !panelHas.hidden) return $("videoListHas");
+    return $("videoListNeed");
+  }
+
+  function captureLibraryScroll() {
+    const el = getActiveVideoListEl();
+    return el ? el.scrollTop : 0;
+  }
+
+  function restoreLibraryScroll(top) {
+    const el = getActiveVideoListEl();
+    if (!el || top == null) return;
+    const apply = () => {
+      el.scrollTop = top;
+    };
+    requestAnimationFrame(() => {
+      apply();
+      requestAnimationFrame(apply);
+    });
+  }
+
+  let _libraryScrollRestore = null;
+
   function appendVideoItem(list, v, index) {
     const li = document.createElement("li");
     if (v.id === state.videoId) li.classList.add("active");
@@ -300,20 +325,92 @@
       hasList.appendChild(btn);
     }
     renderActiveEditors();
+    if (_libraryScrollRestore != null) {
+      restoreLibraryScroll(_libraryScrollRestore);
+      _libraryScrollRestore = null;
+    }
+  }
+
+  async function refreshVideoPagingCounts() {
+    const q = (state.videoQuery || "").trim();
+    const params = new URLSearchParams({ per_page: PER_PAGE, page: "1" });
+    if (q) params.set("q", q);
+    params.set("labeled", "false");
+    const needData = await api(`/api/videos?${params}`);
+    params.set("labeled", "true");
+    const hasData = await api(`/api/videos?${params}`);
+    state.videoPaging = {
+      total_all: needData.total_all || 0,
+      total_labeled: needData.total_labeled || 0,
+      needTotal: needData.total || 0,
+      hasTotal: hasData.total || 0,
+      needPages: needData.pages || 1,
+      hasPages: hasData.pages || 1,
+    };
+    if (state.videoPage.need > state.videoPaging.needPages) {
+      state.videoPage.need = Math.max(1, state.videoPaging.needPages);
+    }
+    if (state.videoPage.has > state.videoPaging.hasPages) {
+      state.videoPage.has = Math.max(1, state.videoPaging.hasPages);
+    }
+  }
+
+  async function reloadVideosKeepingScroll() {
+    _libraryScrollRestore = captureLibraryScroll();
+    const needPages = state.videoPage.need;
+    const hasPages = state.videoPage.has;
+    const q = (state.videoQuery || "").trim();
+    const base = new URLSearchParams({ per_page: PER_PAGE });
+    if (q) base.set("q", q);
+
+    const needVideos = [];
+    let needMeta = null;
+    for (let p = 1; p <= needPages; p++) {
+      const params = new URLSearchParams(base);
+      params.set("page", String(p));
+      params.set("labeled", "false");
+      needMeta = await api(`/api/videos?${params}`);
+      needVideos.push(...(needMeta.videos || []));
+    }
+
+    const hasVideos = [];
+    let hasMeta = null;
+    for (let p = 1; p <= hasPages; p++) {
+      const params = new URLSearchParams(base);
+      params.set("page", String(p));
+      params.set("labeled", "true");
+      hasMeta = await api(`/api/videos?${params}`);
+      hasVideos.push(...(hasMeta.videos || []));
+    }
+
+    state.videos = [...needVideos, ...hasVideos];
+    state.videoPaging = {
+      total_all: needMeta?.total_all || 0,
+      total_labeled: needMeta?.total_labeled || 0,
+      needTotal: needMeta?.total || 0,
+      hasTotal: hasMeta?.total || 0,
+      needPages: needMeta?.pages || 1,
+      hasPages: hasMeta?.pages || 1,
+    };
+    renderVideoList();
   }
 
   async function deleteVideo(id, filename) {
     const ok = window.confirm(`Delete "${filename}" and its annotations?`);
     if (!ok) return;
     try {
+      _libraryScrollRestore = captureLibraryScroll();
       await api(`/api/videos/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (state.videoId === id) {
         await clearVideoSelection({ silent: true });
       }
-      await loadVideos();
+      state.videos = state.videos.filter((v) => v.id !== id);
+      await refreshVideoPagingCounts();
+      renderVideoList();
       await loadLabelCounts();
       toast("Video deleted", "ok");
     } catch (err) {
+      _libraryScrollRestore = null;
       toast(err.message || "Delete failed", "error");
     }
   }

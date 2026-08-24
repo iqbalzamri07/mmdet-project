@@ -258,6 +258,21 @@ html, body {
   grid-template-columns: minmax(260px, 300px) minmax(0, 1fr) minmax(280px, 320px);
 }
 
+@media (max-width: 1100px) {
+  .layout-label.segments-open {
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr) minmax(240px, 280px);
+  }
+
+  .annotate-block-fill {
+    min-height: 140px;
+  }
+
+  .annotate-block-fill .seg-table-wrap {
+    min-height: 90px;
+    max-height: 28vh;
+  }
+}
+
 .layout-label:not(.segments-open) .annotate-rail {
   display: none;
 }
@@ -709,11 +724,22 @@ html, body {
 }
 
 .annotate-block-fill {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 160px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  flex-shrink: 1;
+}
+
+.annotate-block-fill .seg-table-wrap {
+  flex: 1 1 auto;
+  min-height: 100px;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
 }
 
 .block-label {
@@ -992,11 +1018,13 @@ html, body {
 
 .seg-table-rail {
   font-size: 0.8rem;
+  min-width: 280px;
 }
 
 .seg-table-rail th,
 .seg-table-rail td {
   padding: 7px 4px;
+  white-space: nowrap;
 }
 
 .layout-test {
@@ -2016,6 +2044,13 @@ html, body {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    grid-row: 2;
+    min-height: 0;
+    height: auto;
+  }
+
+  .layout-label.mobile-panel-annotate > .annotate-rail {
+    max-height: none;
   }
 
   .layout-label:not(.segments-open) .annotate-rail {
@@ -2041,6 +2076,36 @@ html, body {
 
   .annotate-rail {
     border-top: 0;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .annotate-rail .segments-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .annotate-block {
+    padding: 10px;
+  }
+
+  .annotate-block-fill {
+    min-height: 220px;
+    flex: 0 0 auto;
+  }
+
+  .annotate-block-fill .seg-table-wrap {
+    min-height: 140px;
+    max-height: 36vh;
+  }
+
+  .shortcuts-sheet,
+  .annotate-log-block {
+    flex-shrink: 0;
   }
 
   .empty-guide {
