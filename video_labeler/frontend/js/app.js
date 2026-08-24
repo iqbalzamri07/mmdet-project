@@ -1124,7 +1124,7 @@
     const fresh = await api(`/api/videos/${state.videoId}/meta`);
     state.meta = { ...state.meta, ...fresh };
     renderAnnotateMeta(state.meta);
-    await loadVideos();
+    await reloadVideosKeepingScroll();
     await loadLabelCounts();
     if (offerNext) {
       toast(`Saved by ${annotator}. Click Next video to continue.`, "ok");
