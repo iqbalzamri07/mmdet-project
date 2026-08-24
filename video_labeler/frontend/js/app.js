@@ -419,20 +419,46 @@
     }
   }
 
+  function isVideoSelectable(v) {
+    if (v.processing_status === "transcoding") return false;
+    const lock = state.locks?.[v.id];
+    if (!lock) return true;
+    return lock.client_id === state.clientId;
+  }
+
+  function pickNextVideoAfterDelete(deletedId) {
+    const order = state.videos || [];
+    const available = order.filter((v) => v.id !== deletedId && isVideoSelectable(v));
+    if (!available.length) return null;
+    const curIdx = order.findIndex((v) => v.id === deletedId);
+    const next =
+      curIdx >= 0
+        ? available.find((v) => order.findIndex((x) => x.id === v.id) > curIdx)
+        : null;
+    return next || available[0];
+  }
+
   async function deleteVideo(id, filename) {
     const ok = window.confirm(`Delete "${filename}" and its annotations?`);
     if (!ok) return;
     try {
       _libraryScrollRestore = captureLibraryScroll();
+      const wasOpen = state.videoId === id;
+      const nextVideo = wasOpen ? pickNextVideoAfterDelete(id) : null;
       await api(`/api/videos/${encodeURIComponent(id)}`, { method: "DELETE" });
-      if (state.videoId === id) {
-        await clearVideoSelection({ silent: true });
-      }
       state.videos = state.videos.filter((v) => v.id !== id);
       await refreshVideoPagingCounts();
       renderVideoList();
       await loadLabelCounts();
-      toast("Video deleted", "ok");
+      if (wasOpen && nextVideo) {
+        await selectVideo(nextVideo.id);
+        toast(`Deleted · opened ${nextVideo.filename || nextVideo.id}`, "ok");
+      } else if (wasOpen) {
+        await clearVideoSelection({ silent: true });
+        toast("Video deleted", "ok");
+      } else {
+        toast("Video deleted", "ok");
+      }
     } catch (err) {
       _libraryScrollRestore = null;
       toast(err.message || "Delete failed", "error");
