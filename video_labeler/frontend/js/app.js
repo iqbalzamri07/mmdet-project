@@ -633,14 +633,40 @@
 
   function currentFrame() {
     const fps = state.meta?.fps || 30;
-    return Math.max(0, Math.floor(videoEl.currentTime * fps));
+    return Math.max(0, Math.floor(videoEl.currentTime * fps + 1e-6));
   }
 
   function seekToFrame(frame) {
+    if (!state.meta && !videoEl.duration) return;
     const fps = state.meta?.fps || 30;
-    const total = state.meta?.total_frames || 1;
+    const total = state.meta?.total_frames || Math.max(1, Math.floor((videoEl.duration || 0) * fps));
     const f = Math.min(Math.max(0, frame), Math.max(0, total - 1));
-    videoEl.currentTime = f / fps;
+    const t = f / fps;
+    // Pause so browsers apply the seek reliably
+    if (!videoEl.paused) videoEl.pause();
+    try {
+      videoEl.currentTime = t;
+    } catch (_) {
+      /* ignore seek errors while loading */
+    }
+    syncSeek();
+  }
+
+  function seekBySeconds(delta) {
+    if (!videoEl || (!Number.isFinite(videoEl.duration) && !state.meta)) return;
+    const fps = state.meta?.fps || 30;
+    const duration =
+      Number.isFinite(videoEl.duration) && videoEl.duration > 0
+        ? videoEl.duration
+        : (state.meta?.total_frames || 1) / fps;
+    const next = Math.min(Math.max(0, (videoEl.currentTime || 0) + delta), Math.max(0, duration - 0.001));
+    if (!videoEl.paused) videoEl.pause();
+    try {
+      videoEl.currentTime = next;
+    } catch (_) {
+      /* ignore */
+    }
+    syncSeek();
   }
 
   function syncSeek() {
@@ -1369,10 +1395,10 @@
   };
 
   $("btnPrev").onclick = () => {
-    seekToFrame(currentFrame() - 1);
+    seekBySeconds(-1);
   };
   $("btnNext").onclick = () => {
-    seekToFrame(currentFrame() + 1);
+    seekBySeconds(1);
   };
 
   $("seek").oninput = (e) => {
@@ -1751,10 +1777,10 @@
       $("btnPlay").click();
     } else if (e.code === "ArrowLeft") {
       e.preventDefault();
-      $("btnPrev").click();
+      seekBySeconds(e.shiftKey ? -5 : -1);
     } else if (e.code === "ArrowRight") {
       e.preventDefault();
-      $("btnNext").click();
+      seekBySeconds(e.shiftKey ? 5 : 1);
     } else if (e.key === "s" || e.key === "S") {
       $("btnMarkStart").click();
     } else if (e.key === "e" || e.key === "E") {

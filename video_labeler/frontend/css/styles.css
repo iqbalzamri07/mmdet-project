@@ -339,6 +339,11 @@ html, body {
   flex-shrink: 0;
 }
 
+#navPanelVideos .file-btn {
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
 .nav-panel-desc {
   margin: 0 0 12px;
   color: var(--muted);

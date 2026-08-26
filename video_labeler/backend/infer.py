@@ -130,7 +130,7 @@ def _job_library_entry(job: Dict[str, Any]) -> Dict[str, Any]:
         summary += f" +{len(labels) - 3}"
     return {
         "job_id": job_id,
-        "status": status,
+        "status": status,  
         "source_name": _job_source_name(job),
         "checkpoint": ckpt_name,
         "finished_at": job.get("finished_at") or job.get("updated_at") or job.get("created_at"),

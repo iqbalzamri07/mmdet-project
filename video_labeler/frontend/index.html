@@ -45,6 +45,10 @@
             <span class="count-total" id="libraryCount">0 videos</span>
             <button class="linkish" id="btnRefresh" type="button">Refresh</button>
           </div>
+          <label class="btn btn-primary file-btn btn-block">
+            Upload videos
+            <input type="file" id="fileInput" accept="video/*" multiple hidden />
+          </label>
           <label class="field collab-name-field">
             <span>Your name</span>
             <input id="collabName" type="text" maxlength="32" placeholder="Annotator" autocomplete="nickname" />
@@ -90,10 +94,6 @@
 
         <div class="nav-panel" id="navPanelDataset" hidden>
           <p class="nav-panel-desc">Export labeled clips and train SlowFast.</p>
-          <label class="btn btn-primary file-btn btn-block">
-            Upload videos
-            <input type="file" id="fileInput" accept="video/*" multiple hidden />
-          </label>
           <div class="btn-row">
             <button class="btn btn-ghost" id="btnExport" type="button">Export</button>
             <button class="btn btn-accent" id="btnTrain" type="button">Train</button>
@@ -162,9 +162,9 @@
             <div class="player-chrome">
               <div class="transport-bar">
                 <div class="transport-controls">
+                  <button class="icon-btn" id="btnPrev" type="button" title="Rewind 1s (←)">‹‹</button>
                   <button class="icon-btn" id="btnPlay" type="button" title="Play/Pause (Space)">▶</button>
-                  <button class="icon-btn" id="btnPrev" type="button" title="Previous frame (←)">‹</button>
-                  <button class="icon-btn" id="btnNext" type="button" title="Next frame (→)">›</button>
+                  <button class="icon-btn" id="btnNext" type="button" title="Forward 1s (→)">››</button>
                 </div>
                 <div class="timecode" id="timecode">0 / 0</div>
               </div>
@@ -239,7 +239,8 @@
             <summary>Keyboard shortcuts</summary>
             <dl class="shortcut-list">
               <div><dt>Space</dt><dd>Play / pause</dd></div>
-              <div><dt>← →</dt><dd>Prev / next frame</dd></div>
+              <div><dt>← →</dt><dd>Rewind / forward 1s</dd></div>
+              <div><dt>Shift+← →</dt><dd>Rewind / forward 5s</dd></div>
               <div><dt>S</dt><dd>Mark start</dd></div>
               <div><dt>E</dt><dd>Mark end</dd></div>
               <div><dt>Enter</dt><dd>Save segment</dd></div>
