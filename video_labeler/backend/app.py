@@ -268,10 +268,21 @@ def _rebuild_video_index() -> List[Dict[str, Any]]:
                     "segments": [],
                 }
                 save_annotation(stem, ann)
+        segs = (ann or {}).get("segments") or []
+        activities = []
+        seen_act = set()
+        for seg in segs:
+            if not isinstance(seg, dict):
+                continue
+            for name in config.segment_class_names(seg):
+                if name and name not in seen_act:
+                    seen_act.add(name)
+                    activities.append(name)
         index.append({
             "id": stem,
             "filename": path.name,
-            "segments": len(ann.get("segments", [])) if ann else 0,
+            "segments": len(segs),
+            "activities": activities,
             "last_annotator": (ann or {}).get("last_annotator") or "",
             "updated_at": (ann or {}).get("updated_at") or "",
             "sort_ts": _video_sort_ts(ann, path),
@@ -309,12 +320,21 @@ def list_videos(
     page: int = 1,
     per_page: int = 100,
     labeled: Optional[bool] = None,
+    activity: Optional[str] = None,
 ):
     index = _get_video_index()
     filtered = index
     if q:
         ql = q.strip().lower()
         filtered = [v for v in filtered if ql in v["filename"].lower() or ql in v["id"].lower()]
+    act = (activity or "").strip()
+    if act:
+        act_l = act.lower()
+        filtered = [
+            v
+            for v in filtered
+            if any(str(a).lower() == act_l for a in (v.get("activities") or []))
+        ]
     if labeled is True:
         filtered = [v for v in filtered if v["segments"] > 0]
     elif labeled is False:
@@ -334,6 +354,7 @@ def list_videos(
         "page": page,
         "per_page": per_page,
         "pages": (total + per_page - 1) // per_page if per_page else 1,
+        "activity": act or None,
     }
 
 

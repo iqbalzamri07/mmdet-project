@@ -9,6 +9,7 @@
     totalCount: 0,
     videos: [],
     videoQuery: "",
+    activityFilter: "",
     videoPage: { need: 1, has: 1 },
     videoPaging: { total_all: 0, total_labeled: 0, needTotal: 0, hasTotal: 0, needPages: 1, hasPages: 1 },
     videoId: null,
@@ -88,7 +89,12 @@
   function renderChip(label) {
     const count = state.counts[label] || 0;
     const chip = document.createElement("span");
-    chip.className = state.editingClasses ? "chip chip-editing" : "chip";
+    const active = state.activityFilter === label;
+    chip.className = state.editingClasses
+      ? "chip chip-editing"
+      : active
+        ? "chip chip-filter-active"
+        : "chip chip-clickable";
     chip.innerHTML = `<span class="chip-name">${label}</span><span class="chip-count">${count}</span>`;
     if (state.editingClasses) {
       const btn = document.createElement("button");
@@ -102,8 +108,43 @@
         removeClass(label);
       };
       chip.appendChild(btn);
+    } else {
+      chip.title = `Show videos with ${label}`;
+      chip.setAttribute("role", "button");
+      chip.tabIndex = 0;
+      chip.onclick = () => filterVideosByActivity(label);
+      chip.onkeydown = (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          filterVideosByActivity(label);
+        }
+      };
     }
     return chip;
+  }
+
+  function syncActivityFilterSelect() {
+    const sel = $("activityFilter");
+    if (!sel) return;
+    fillSelect(sel, state.activities || [], [{ value: "", label: "All activities" }]);
+    if (state.activityFilter && [...sel.options].some((o) => o.value === state.activityFilter)) {
+      sel.value = state.activityFilter;
+    } else if (!state.activityFilter) {
+      sel.value = "";
+    }
+  }
+
+  async function filterVideosByActivity(activity) {
+    const next = state.activityFilter === activity ? "" : activity;
+    state.activityFilter = next;
+    const sel = $("activityFilter");
+    if (sel) sel.value = next;
+    syncActivityFilterSelect();
+    renderLabels();
+    setNavTab("videos");
+    if (next) setLibraryTab("has");
+    await fetchVideos(true);
+    if (next) toast(`Showing videos with “${next}”`);
   }
 
   function fillSelect(select, values, extra) {
@@ -144,6 +185,7 @@
 
     const activitySel = $("activitySelect");
     if (activitySel) fillSelect(activitySel, state.activities || [], [{ value: "", label: "none" }]);
+    syncActivityFilterSelect();
     const totalEl = $("classCountTotal");
     if (totalEl) {
       const total = state.totalCount ?? Object.values(state.counts).reduce((a, b) => a + b, 0);
@@ -222,6 +264,10 @@
     if (v.segments > 0 && v.last_annotator) {
       annotatorLine = `<div class="meta">Saved by ${v.last_annotator}${v.updated_at ? ` · ${formatAnnotateTime(v.updated_at)}` : ""}</div>`;
     }
+    const acts = (v.activities || []).filter(Boolean);
+    const activitiesLine = acts.length
+      ? `<div class="meta video-activities">${acts.join(" · ")}</div>`
+      : "";
     let processingHtml = "";
     if (v.processing_status === "transcoding") {
       processingHtml = `<div class="lock-badge processing">Converting to H.264…</div>`;
@@ -237,6 +283,7 @@
         <div class="video-info">
           <div class="name" title="${v.filename}">${v.filename}</div>
           <div class="meta">${Math.round(v.duration || 0)}s · ${v.segments || 0} segments · ${v.total_frames || 0} frames</div>
+          ${activitiesLine}
           ${annotatorLine}
           ${processingHtml}
           ${lockHtml}
@@ -324,7 +371,10 @@
     const { total_all, total_labeled, needTotal, hasTotal, needPages, hasPages } = state.videoPaging;
     if (countEl) {
       const q = (state.videoQuery || "").trim();
-      if (q) {
+      const act = (state.activityFilter || "").trim();
+      if (act) {
+        countEl.textContent = `${hasTotal} with “${act}” · ${total_labeled} labeled · ${total_all} total`;
+      } else if (q) {
         countEl.textContent = `${needTotal + hasTotal} results · ${total_all} total · ${total_labeled} with segments`;
       } else {
         countEl.textContent = `${total_all} video${total_all === 1 ? "" : "s"} · ${total_labeled} with segments`;
@@ -374,7 +424,10 @@
     }
 
     if (!hasVideos.length) {
-      hasList.innerHTML = '<li class="meta">None on this page</li>';
+      const act = (state.activityFilter || "").trim();
+      hasList.innerHTML = act
+        ? `<li class="meta">No videos with “${act}”</li>`
+        : '<li class="meta">None on this page</li>';
     } else {
       hasVideos.forEach((v, i) => appendVideoItem(hasList, v, i + 1));
     }
@@ -807,8 +860,10 @@
       state.videos = [];
     }
     const q = (state.videoQuery || "").trim();
+    const activity = (state.activityFilter || "").trim();
     const params = new URLSearchParams({ per_page: PER_PAGE });
     if (q) params.set("q", q);
+    if (activity) params.set("activity", activity);
 
     params.set("page", state.videoPage.need);
     params.set("labeled", "false");
@@ -1353,6 +1408,13 @@
     state.videoQuery = e.target.value;
     clearTimeout(_searchTimer);
     _searchTimer = setTimeout(() => fetchVideos(true), 300);
+  });
+
+  $("activityFilter")?.addEventListener("change", async (e) => {
+    state.activityFilter = e.target.value || "";
+    renderLabels();
+    if (state.activityFilter) setLibraryTab("has");
+    await fetchVideos(true);
   });
 
   $("btnEditLabels").onclick = () => {

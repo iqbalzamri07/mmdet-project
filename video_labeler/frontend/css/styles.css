@@ -1341,6 +1341,32 @@ html, body {
   background: #fff;
 }
 
+.activity-filter-field {
+  margin: 0 0 12px;
+  flex-shrink: 0;
+}
+.activity-filter-field select {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  background: #f8fafb;
+}
+.chip-clickable {
+  cursor: pointer;
+}
+.chip-clickable:hover {
+  border-color: var(--teal);
+}
+.chip-filter-active {
+  cursor: pointer;
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal) 12%, #fff);
+}
+.video-activities {
+  color: var(--teal);
+  font-weight: 600;
+}
+
 .library-columns {
   flex: 1;
   min-height: 0;
@@ -1733,7 +1759,8 @@ html, body {
 }
 
 .library-panel .panel-head,
-.library-panel .video-search {
+.library-panel .video-search,
+.library-panel .activity-filter-field {
   flex-shrink: 0;
 }
 
