@@ -1088,7 +1088,7 @@
     updateLabelLayout();
     updateLockPill();
     renderAnnotateMeta(null);
-    renderVideoList();
+    renderVideoList({ preserveScroll: true });
     renderActiveEditors();
     setMobilePanel("modeLabel", "nav");
     if (hadVideo && !silent) toast("Video deselected");
@@ -1125,7 +1125,7 @@
       }
     } catch (err) {
       toast(err.message || "Video is locked by someone else", "error");
-      renderVideoList();
+      renderVideoList({ preserveScroll: true });
       return;
     }
 
@@ -1142,7 +1142,7 @@
     $("segmentsPanel").classList.remove("hidden");
     updateLabelLayout();
     updateLockPill();
-    renderVideoList();
+    renderVideoList({ preserveScroll: true });
     startLockHeartbeat();
 
     const meta = await api(`/api/videos/${id}/meta`);
@@ -1446,7 +1446,14 @@
 
   async function goNextUnlabeled() {
     try {
-      await loadVideos();
+      const prevId = state.videoId;
+      // Snapshot Need order before refresh so we can continue from the same place
+      const needOrderBefore = (state.videos || [])
+        .filter((v) => !(v.segments > 0) || v.id === prevId)
+        .map((v) => v.id);
+      const prevNeedIdx = prevId ? needOrderBefore.indexOf(prevId) : -1;
+
+      await reloadVideosKeepingScroll();
       const need = (state.videos || []).filter((v) => !(v.segments > 0));
       const available = need.filter((v) => {
         if (v.id === state.videoId) return false;
@@ -1458,15 +1465,26 @@
         toast("No unlabeled videos left (or all are locked)", "ok");
         return;
       }
-      const order = state.videos || [];
-      const curIdx = order.findIndex((v) => v.id === state.videoId);
-      let next =
-        curIdx >= 0
-          ? available.find((v) => order.findIndex((x) => x.id === v.id) > curIdx)
-          : null;
+
+      let next = null;
+      if (prevNeedIdx >= 0) {
+        for (let i = prevNeedIdx + 1; i < needOrderBefore.length; i++) {
+          const cand = available.find((v) => v.id === needOrderBefore[i]);
+          if (cand) {
+            next = cand;
+            break;
+          }
+        }
+      }
       if (!next) next = available[0];
+
       setNavTab("videos");
+      setLibraryTab("need");
       await selectVideo(next.id);
+      requestAnimationFrame(() => {
+        const active = document.querySelector("#videoListNeed li.active");
+        active?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
       toast(`Opened next unlabeled: ${next.filename || next.id}`);
       setMobilePanel("modeLabel", "stage");
     } catch (err) {
