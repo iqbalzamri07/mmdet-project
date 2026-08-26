@@ -35,9 +35,7 @@ DETECT_EVERY = 2  # run detector every N frames (speed)
 WINDOW_STRIDE = 8
 DET_THRESHOLD = 0.7
 TARGET_SIZE = (160, 160)
-# Activity needs high confidence; posture can be a bit lower
 CONFIDENCE_THRESHOLD = 0.70
-POSTURE_THRESHOLD = 0.50
 ACTIVITY_THRESHOLD = 0.60
 
 for d in (TEST_INPUT_DIR, TEST_OUTPUT_DIR, TEST_JOBS_DIR):
@@ -121,8 +119,7 @@ def _job_library_entry(job: Dict[str, Any]) -> Dict[str, Any]:
         status = "completed"
     labels = []
     for p in persons:
-        parts = [p.get("posture"), p.get("activity")]
-        label = " + ".join(x for x in parts if x) or p.get("label") or ""
+        label = p.get("activity") or p.get("label") or ""
         if label and label not in labels:
             labels.append(label)
     summary = ", ".join(labels[:3])
@@ -337,10 +334,10 @@ class _PersonTracker:
                 }
 
 
-def _load_label_taxonomy() -> Tuple[List[str], List[str], List[str]]:
+def _load_label_taxonomy() -> Tuple[List[str], List[str]]:
+    """Return (all_labels, activities) for activity-only decoding."""
     labels_file = config.DATA_DIR / "labels.json"
     labels = list(config.ACTION_LABELS)
-    postures = list(config.POSTURE_LABELS)
     activities = list(config.ACTIVITY_LABELS)
     if labels_file.exists():
         try:
@@ -348,13 +345,15 @@ def _load_label_taxonomy() -> Tuple[List[str], List[str], List[str]]:
                 data = json.load(f)
             if data.get("labels"):
                 labels = list(data["labels"])
-            if data.get("postures"):
-                postures = list(data["postures"])
             if data.get("activities"):
                 activities = list(data["activities"])
+            elif not activities and labels:
+                activities = list(labels)
         except (OSError, json.JSONDecodeError):
             pass
-    return labels, postures, activities
+    if not activities:
+        activities = list(labels)
+    return labels, activities
 
 
 def _cfg_is_multilabel(cfg) -> bool:
@@ -396,29 +395,19 @@ def _best_in_group(
     return labels[best], score
 
 
-def _compose_prediction(posture: str, p_score: float, activity: str, a_score: float) -> Dict[str, Any]:
-    # Walking already implies locomotion; don't also print standing.
-    show_posture = posture if activity != "walking" else ""
-    parts = [p for p in (show_posture, activity) if p]
-    display = " + ".join(parts) if parts else "unknown"
-    if activity:
-        score = a_score if a_score > 0 else p_score
-    else:
-        score = p_score
+def _compose_prediction(activity: str, a_score: float) -> Dict[str, Any]:
+    display = activity if activity else "unknown"
     return {
         "label": display,
-        "posture": show_posture,
-        "posture_score": round(p_score, 4),
         "activity": activity,
         "activity_score": round(a_score, 4),
-        "score": round(float(score), 4),
+        "score": round(float(a_score), 4),
     }
 
 
-def _decode_posture_activity(
+def _decode_activity(
     scores: np.ndarray,
     labels: List[str],
-    postures: List[str],
     activities: List[str],
     multi_label: bool,
 ) -> Dict[str, Any]:
@@ -428,16 +417,16 @@ def _decode_posture_activity(
     looks_logits = raw.min() < 0 or raw.max() > 1.5
     if looks_softmax:
         probs = raw / (raw.sum() + 1e-8)
-        p_thr, a_thr = 0.15, ACTIVITY_THRESHOLD
+        a_thr = 0.15
     elif multi_label or not looks_logits:
         probs = _sigmoid(raw) if looks_logits else raw
-        p_thr, a_thr = POSTURE_THRESHOLD, ACTIVITY_THRESHOLD
+        a_thr = ACTIVITY_THRESHOLD
     else:
         probs = _softmax(raw)
-        p_thr, a_thr = 0.15, ACTIVITY_THRESHOLD
-    posture, p_score = _best_in_group(labels[:n], probs, postures, p_thr)
-    activity, a_score = _best_in_group(labels[:n], probs, activities, a_thr)
-    return _compose_prediction(posture, p_score, activity, a_score)
+        a_thr = 0.15
+    group = activities or labels[:n]
+    activity, a_score = _best_in_group(labels[:n], probs, group, a_thr)
+    return _compose_prediction(activity, a_score)
 
 
 def _detect_persons(det_model, frame) -> List[Tuple[int, int, int, int]]:
@@ -552,15 +541,14 @@ def _classify_crops(
     backend,
     crops: List[np.ndarray],
     labels: List[str],
-    postures: List[str],
     activities: List[str],
     multi_label: bool,
 ) -> Dict[str, Any]:
-    empty = _compose_prediction("", 0.0, "", 0.0)
+    empty = _compose_prediction("", 0.0)
     scores = backend.scores_from_crops(crops)
     if scores is None:
         return empty
-    return _decode_posture_activity(scores, labels, postures, activities, multi_label)
+    return _decode_activity(scores, labels, activities, multi_label)
 
 
 _live_lock = threading.Lock()
@@ -578,7 +566,7 @@ def _get_live_models(checkpoint_path: Path) -> Dict[str, Any]:
     from mmengine import init_default_scope
 
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:64,expandable_segments:True")
-    labels, postures, activities = _load_label_taxonomy()
+    labels, activities = _load_label_taxonomy()
     backend, multi_label = load_action_backend(checkpoint_path, labels)
     init_default_scope("mmdet")
     det_model = init_detector(str(DET_CONFIG), str(DET_CHECKPOINT), device="cpu")
@@ -588,7 +576,6 @@ def _get_live_models(checkpoint_path: Path) -> Dict[str, Any]:
         "action_model": backend,
         "det_model": det_model,
         "labels": labels,
-        "postures": postures,
         "activities": activities,
         "multi_label": multi_label,
         "device": getattr(backend, "kind", "pth"),
@@ -623,7 +610,6 @@ def run_live_clip(frames: List[np.ndarray], checkpoint_path: Path) -> Dict[str, 
                 bundle["action_backend"],
                 crops,
                 bundle["labels"],
-                bundle["postures"],
                 bundle["activities"],
                 bundle["multi_label"],
             )
@@ -632,10 +618,8 @@ def run_live_clip(frames: List[np.ndarray], checkpoint_path: Path) -> Dict[str, 
                     "id": i,
                     "bbox": [int(x1), int(y1), int(x2), int(y2)],
                     "label": pred.get("label") or "unknown",
-                    "posture": pred.get("posture") or "",
                     "activity": pred.get("activity") or "",
                     "score": pred.get("score", 0),
-                    "posture_score": pred.get("posture_score", 0),
                     "activity_score": pred.get("activity_score", 0),
                     "frames": len(crops),
                 }
@@ -689,7 +673,7 @@ def run_inference(
 
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:64,expandable_segments:True")
 
-    labels, postures, activities = _load_label_taxonomy()
+    labels, activities = _load_label_taxonomy()
     job_id = job_id or datetime.utcnow().strftime("infer_%Y%m%d_%H%M%S")
     log_lines: List[str] = []
 
@@ -712,9 +696,8 @@ def run_inference(
     log(f"[infer] video={video_path.name}")
     log(f"[infer] checkpoint={checkpoint_path.name}")
     log(f"[infer] labels={labels}")
-    log(f"[infer] postures={postures}")
     log(f"[infer] activities={activities}")
-    log(f"[infer] activity_threshold={ACTIVITY_THRESHOLD:.0%} posture_threshold={POSTURE_THRESHOLD:.0%}")
+    log(f"[infer] activity_threshold={ACTIVITY_THRESHOLD:.0%}")
 
     action_backend, multi_label = load_action_backend(checkpoint_path, labels, log=log)
 
@@ -763,7 +746,6 @@ def run_inference(
         starts = list(range(0, max(1, len(seq) - CLIP_LEN + 1), WINDOW_STRIDE))
         if not starts:
             starts = [0]
-        posture_votes: Dict[str, float] = {}
         activity_votes: Dict[str, float] = {}
         for s in starts:
             window = seq[s : s + CLIP_LEN]
@@ -773,28 +755,20 @@ def run_inference(
                 crop = frames[fidx][max(0, y1) : y2, max(0, x1) : x2]
                 crops.append(crop)
             pred = _classify_crops(
-                action_backend, crops, labels, postures, activities, multi_label
+                action_backend, crops, labels, activities, multi_label
             )
             for fidx, _ in window:
                 frame_labels[fidx] = pred
-            if pred.get("posture"):
-                posture_votes[pred["posture"]] = posture_votes.get(pred["posture"], 0.0) + pred.get(
-                    "posture_score", 0.0
-                )
             if pred.get("activity"):
                 activity_votes[pred["activity"]] = activity_votes.get(pred["activity"], 0.0) + pred.get(
                     "activity_score", 0.0
                 )
         track_frame_labels[tid] = frame_labels
-        best_posture, p_score = ("", 0.0)
         best_activity, a_score = ("", 0.0)
-        if posture_votes:
-            best_posture = max(posture_votes.items(), key=lambda x: x[1])[0]
-            p_score = posture_votes[best_posture] / max(1, len(starts))
         if activity_votes:
             best_activity = max(activity_votes.items(), key=lambda x: x[1])[0]
             a_score = activity_votes[best_activity] / max(1, len(starts))
-        composed = _compose_prediction(best_posture, p_score, best_activity, a_score)
+        composed = _compose_prediction(best_activity, a_score)
         summary[tid] = {
             **composed,
             "frames": len(seq),
@@ -894,10 +868,8 @@ def run_inference(
             {
                 "id": tid,
                 "label": info.get("label"),
-                "posture": info.get("posture") or "",
                 "activity": info.get("activity") or "",
                 "score": info.get("score", 0),
-                "posture_score": info.get("posture_score", 0),
                 "activity_score": info.get("activity_score", 0),
                 "frames": info.get("frames"),
             }

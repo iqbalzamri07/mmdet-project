@@ -979,7 +979,7 @@ async def test_live(
     checkpoint: str = Form(...),
     frames: List[UploadFile] = File(...),
 ):
-    """Classify a short webcam clip (JPEG frames) with person boxes + posture/activity."""
+    """Classify a short webcam clip (JPEG frames) with person boxes + activity."""
     try:
         ckpt = resolve_work_file(checkpoint)
     except (FileNotFoundError, ValueError) as exc:

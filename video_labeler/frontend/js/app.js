@@ -2466,15 +2466,14 @@
     body.innerHTML = "";
     const persons = job.persons || [];
     if (!persons.length) {
-      body.innerHTML = '<tr><td colspan="5">No persons detected</td></tr>';
+      body.innerHTML = '<tr><td colspan="4">No persons detected</td></tr>';
       return;
     }
     persons.forEach((p) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>P${p.id}</td>
-        <td>${p.posture || "—"}</td>
-        <td>${p.activity || "—"}</td>
+        <td>${p.activity || p.label || "—"}</td>
         <td>${(p.score * 100).toFixed(1)}%</td>
         <td>${p.frames}</td>`;
       body.appendChild(tr);
@@ -2487,15 +2486,14 @@
     if (!body) return;
     body.innerHTML = "";
     if (!persons?.length) {
-      body.innerHTML = '<tr><td colspan="4">No persons detected</td></tr>';
+      body.innerHTML = '<tr><td colspan="3">No persons detected</td></tr>';
       return;
     }
     persons.forEach((p) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>P${p.id}</td>
-        <td>${p.posture || "—"}</td>
-        <td>${p.activity || "—"}</td>
+        <td>${p.activity || p.label || "—"}</td>
         <td>${((p.score || 0) * 100).toFixed(1)}%</td>`;
       body.appendChild(tr);
     });
@@ -2788,14 +2786,13 @@
         const body = $("predBody");
         body.innerHTML = "";
         if (!testState.lastPersons.length) {
-          body.innerHTML = '<tr><td colspan="5">No persons detected</td></tr>';
+          body.innerHTML = '<tr><td colspan="4">No persons detected</td></tr>';
         } else {
           testState.lastPersons.forEach((p) => {
             const tr = document.createElement("tr");
             tr.innerHTML = `
               <td>P${p.id}</td>
-              <td>${p.posture || "—"}</td>
-              <td>${p.activity || "—"}</td>
+              <td>${p.activity || p.label || "—"}</td>
               <td>${((p.score || 0) * 100).toFixed(1)}%</td>
               <td>${p.frames}</td>`;
             body.appendChild(tr);
