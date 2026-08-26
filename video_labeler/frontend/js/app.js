@@ -1723,6 +1723,12 @@
     }
   };
 
+  function getActiveLibraryTab() {
+    const panelHas = $("libraryPanelHas");
+    if (panelHas && !panelHas.hidden) return "has";
+    return "need";
+  }
+
   // Keyboard shortcuts (label mode only)
   window.addEventListener("keydown", (e) => {
     if (document.getElementById("modeLabel").classList.contains("hidden")) return;
@@ -1742,6 +1748,22 @@
       $("btnMarkEnd").click();
     } else if (e.key === "Enter") {
       $("btnSaveSeg").click();
+    } else if (e.key === "n" || e.key === "N") {
+      e.preventDefault();
+      goNextUnlabeled();
+    } else if (e.key === "a" || e.key === "A") {
+      e.preventDefault();
+      selectAllInTab(getActiveLibraryTab());
+      toast(
+        (() => {
+          const tab = getActiveLibraryTab();
+          const n = videosInTab(tab).filter((v) => state.selectedVideos.has(v.id)).length;
+          return n ? `Selected ${n} video${n === 1 ? "" : "s"} for bulk delete` : "Nothing to select";
+        })()
+      );
+    } else if (e.shiftKey && (e.key === "Delete" || e.key === "Backspace")) {
+      e.preventDefault();
+      deleteSelectedInTab(getActiveLibraryTab());
     }
   });
 

@@ -68,9 +68,9 @@
             <div class="library-tab-panel active" id="libraryPanelNeed" role="tabpanel">
               <p class="library-tab-count" id="needLabelsTitle">0 videos</p>
               <div class="library-bulk" id="bulkBarNeed">
-                <button type="button" class="btn btn-ghost btn-small" id="btnSelectAllNeed">Select all</button>
+                <button type="button" class="btn btn-ghost btn-small" id="btnSelectAllNeed" title="Select all loaded videos (A)">Select all</button>
                 <button type="button" class="btn btn-ghost btn-small" id="btnClearSelNeed" disabled>Clear</button>
-                <button type="button" class="btn btn-ghost btn-small btn-bulk-delete" id="btnDeleteSelNeed" disabled>Delete</button>
+                <button type="button" class="btn btn-ghost btn-small btn-bulk-delete" id="btnDeleteSelNeed" disabled title="Delete selected (Shift+Delete)">Delete</button>
                 <span class="library-bulk-count" id="bulkCountNeed"></span>
               </div>
               <ul class="video-list" id="videoListNeed"></ul>
@@ -78,9 +78,9 @@
             <div class="library-tab-panel" id="libraryPanelHas" role="tabpanel" hidden>
               <p class="library-tab-count" id="hasSegmentsTitle">0 videos</p>
               <div class="library-bulk" id="bulkBarHas">
-                <button type="button" class="btn btn-ghost btn-small" id="btnSelectAllHas">Select all</button>
+                <button type="button" class="btn btn-ghost btn-small" id="btnSelectAllHas" title="Select all loaded videos (A)">Select all</button>
                 <button type="button" class="btn btn-ghost btn-small" id="btnClearSelHas" disabled>Clear</button>
-                <button type="button" class="btn btn-ghost btn-small btn-bulk-delete" id="btnDeleteSelHas" disabled>Delete</button>
+                <button type="button" class="btn btn-ghost btn-small btn-bulk-delete" id="btnDeleteSelHas" disabled title="Delete selected (Shift+Delete)">Delete</button>
                 <span class="library-bulk-count" id="bulkCountHas"></span>
               </div>
               <ul class="video-list" id="videoListHas"></ul>
@@ -218,7 +218,7 @@
             <h3 class="block-label">Saved segments</h3>
             <div class="seg-actions" role="group" aria-label="Segment actions">
               <button class="btn btn-ghost" id="btnSaveAll" type="button">Save all</button>
-              <button class="btn btn-primary" id="btnNextUnlabeled" type="button" title="Open next video that still needs labels">Next video</button>
+              <button class="btn btn-primary" id="btnNextUnlabeled" type="button" title="Open next video that still needs labels (N)">Next video</button>
             </div>
             <div class="seg-table-wrap">
               <table class="seg-table seg-table-rail">
@@ -243,6 +243,9 @@
               <div><dt>S</dt><dd>Mark start</dd></div>
               <div><dt>E</dt><dd>Mark end</dd></div>
               <div><dt>Enter</dt><dd>Save segment</dd></div>
+              <div><dt>N</dt><dd>Next video</dd></div>
+              <div><dt>A</dt><dd>Select all (bulk)</dd></div>
+              <div><dt>Shift+Del</dt><dd>Delete selected</dd></div>
             </dl>
           </details>
 
