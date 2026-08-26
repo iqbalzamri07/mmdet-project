@@ -1444,48 +1444,101 @@
   $("btnSaveAll").onclick = () =>
     saveAnnotations({ offerNext: true }).catch((e) => toast(e.message, "error"));
 
+  async function loadMoreNeedPages(count = 1) {
+    const needPages = state.videoPaging?.needPages || 1;
+    let loaded = 0;
+    while (loaded < count && state.videoPage.need < needPages) {
+      state.videoPage.need++;
+      const q = (state.videoQuery || "").trim();
+      const params = new URLSearchParams({
+        per_page: PER_PAGE,
+        page: String(state.videoPage.need),
+        labeled: "false",
+      });
+      if (q) params.set("q", q);
+      const needData = await api(`/api/videos?${params}`);
+      const existingIds = new Set(state.videos.map((v) => v.id));
+      (needData.videos || []).forEach((v) => {
+        if (!existingIds.has(v.id)) state.videos.push(v);
+      });
+      state.videoPaging = {
+        ...state.videoPaging,
+        needTotal: needData.total || state.videoPaging.needTotal,
+        needPages: needData.pages || state.videoPaging.needPages,
+        total_all: needData.total_all || state.videoPaging.total_all,
+        total_labeled: needData.total_labeled || state.videoPaging.total_labeled,
+      };
+      loaded++;
+    }
+    return loaded;
+  }
+
   async function goNextUnlabeled() {
     try {
       const prevId = state.videoId;
-      // Snapshot Need order before refresh so we can continue from the same place
+      // Snapshot Need order while current video is still in place (even if just labeled)
       const needOrderBefore = (state.videos || [])
         .filter((v) => !(v.segments > 0) || v.id === prevId)
         .map((v) => v.id);
       const prevNeedIdx = prevId ? needOrderBefore.indexOf(prevId) : -1;
+      const seenNeedIds = new Set(needOrderBefore);
 
       await reloadVideosKeepingScroll();
-      const need = (state.videos || []).filter((v) => !(v.segments > 0));
-      const available = need.filter((v) => {
-        if (v.id === state.videoId) return false;
+
+      const isAvailable = (v) => {
+        if (!v || v.id === prevId) return false;
+        if (v.segments > 0) return false;
         const lock = state.locks?.[v.id];
         if (!lock) return true;
         return lock.client_id === state.clientId;
-      });
-      if (!available.length) {
-        toast("No unlabeled videos left (or all are locked)", "ok");
-        return;
-      }
+      };
 
-      let next = null;
-      if (prevNeedIdx >= 0) {
-        for (let i = prevNeedIdx + 1; i < needOrderBefore.length; i++) {
-          const cand = available.find((v) => v.id === needOrderBefore[i]);
-          if (cand) {
-            next = cand;
-            break;
+      const findInLoaded = () => {
+        // Prefer the next ids that were below the current one in the list
+        if (prevNeedIdx >= 0) {
+          for (let i = prevNeedIdx + 1; i < needOrderBefore.length; i++) {
+            const v = (state.videos || []).find((x) => x.id === needOrderBefore[i]);
+            if (isAvailable(v)) return v;
           }
         }
+        return null;
+      };
+
+      let next = findInLoaded();
+
+      // End of loaded Need list → fetch next page(s) instead of jumping to #1
+      while (!next && state.videoPage.need < (state.videoPaging?.needPages || 1)) {
+        toast("Loading more videos…", "ok");
+        const added = await loadMoreNeedPages(1);
+        if (!added) break;
+        // First newly loaded unlabeled video (API order = list order)
+        next = (state.videos || []).find((v) => !seenNeedIds.has(v.id) && isAvailable(v)) || null;
+        (state.videos || []).forEach((v) => {
+          if (!(v.segments > 0)) seenNeedIds.add(v.id);
+        });
+        if (!next) next = findInLoaded();
       }
-      if (!next) next = available[0];
+
+      const available = (state.videos || []).filter(isAvailable);
+      if (!next) {
+        if (!available.length) {
+          toast("No unlabeled videos left (or all are locked)", "ok");
+          return;
+        }
+        next = available[0];
+        toast(`Reached end of Need list · opened first unlabeled: ${next.filename || next.id}`);
+      } else {
+        toast(`Opened next unlabeled: ${next.filename || next.id}`);
+      }
 
       setNavTab("videos");
       setLibraryTab("need");
+      renderVideoList({ preserveScroll: true });
       await selectVideo(next.id);
       requestAnimationFrame(() => {
         const active = document.querySelector("#videoListNeed li.active");
         active?.scrollIntoView({ block: "nearest", behavior: "smooth" });
       });
-      toast(`Opened next unlabeled: ${next.filename || next.id}`);
       setMobilePanel("modeLabel", "stage");
     } catch (err) {
       toast(err.message, "error");
