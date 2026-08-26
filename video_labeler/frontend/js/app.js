@@ -508,6 +508,19 @@
     await deleteVideosBulk(ids);
   }
 
+  async function deleteAllSelected() {
+    const ids = [...state.selectedVideos];
+    if (!ids.length) {
+      toast("No videos selected — press A on a video first", "error");
+      return;
+    }
+    const ok = window.confirm(
+      `Delete ${ids.length} video${ids.length === 1 ? "" : "s"} and their annotations? This cannot be undone.`
+    );
+    if (!ok) return;
+    await deleteVideosBulk(ids);
+  }
+
   async function deleteVideosBulk(ids) {
     if (!ids.length) return;
     try {
@@ -1753,17 +1766,22 @@
       goNextUnlabeled();
     } else if (e.key === "a" || e.key === "A") {
       e.preventDefault();
-      selectAllInTab(getActiveLibraryTab());
-      toast(
-        (() => {
-          const tab = getActiveLibraryTab();
-          const n = videosInTab(tab).filter((v) => state.selectedVideos.has(v.id)).length;
-          return n ? `Selected ${n} video${n === 1 ? "" : "s"} for bulk delete` : "Nothing to select";
-        })()
-      );
+      if (!state.videoId) {
+        toast("Open a video first to select it", "error");
+        return;
+      }
+      const id = state.videoId;
+      if (state.selectedVideos.has(id)) {
+        state.selectedVideos.delete(id);
+        toast("Deselected current video");
+      } else {
+        state.selectedVideos.add(id);
+        toast("Selected current video");
+      }
+      renderVideoList({ preserveScroll: true });
     } else if (e.shiftKey && (e.key === "Delete" || e.key === "Backspace")) {
       e.preventDefault();
-      deleteSelectedInTab(getActiveLibraryTab());
+      deleteAllSelected();
     }
   });
 
