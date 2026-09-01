@@ -513,20 +513,97 @@ class OnnxActionBackend:
         return np.asarray(out, dtype=np.float32).reshape(-1)
 
 
-def load_action_backend(model_path: Path, labels: List[str], log=None):
-    """Load SlowFast from .pth (MMAction2) or .onnx (ONNX Runtime)."""
+def _checkpoint_num_classes(model_path: Path) -> Optional[int]:
+    """Read SlowFast cls_head size from a .pth checkpoint, if present."""
+    if model_path.suffix.lower() != ".pth" or not model_path.exists():
+        return None
+    try:
+        obj = torch.load(str(model_path), map_location="cpu", weights_only=False)
+    except TypeError:
+        obj = torch.load(str(model_path), map_location="cpu")
+    except Exception:
+        return None
+    state = obj.get("state_dict") if isinstance(obj, dict) else None
+    if state is None and isinstance(obj, dict):
+        state = obj
+    if not isinstance(state, dict):
+        return None
+    weight = state.get("cls_head.fc_cls.weight")
+    if weight is None:
+        return None
+    try:
+        return int(weight.shape[0])
+    except Exception:
+        return None
+
+
+def _resolve_model_labels(preferred: Optional[List[str]] = None) -> List[str]:
+    """
+    Label order must match the trained head.
+    Prefer SlowFast config ACTION_LABELS (what train used), then labels.json / caller hint.
+    """
     from mmengine.config import Config
+
+    cfg_labels: List[str] = []
+    try:
+        cfg = Config.fromfile(str(ACTION_CONFIG))
+        raw = getattr(cfg, "ACTION_LABELS", None)
+        if raw:
+            cfg_labels = [str(x) for x in list(raw) if str(x).strip()]
+    except Exception:
+        cfg_labels = []
+
+    file_labels, file_activities = _load_label_taxonomy()
+    hint = [str(x) for x in (preferred or []) if str(x).strip()]
+    # Prefer train-config order; fall back to taxonomy / hint.
+    labels = cfg_labels or hint or file_labels or file_activities or list(config.ACTION_LABELS)
+    # De-dupe, keep order
+    out: List[str] = []
+    seen = set()
+    for name in labels:
+        if name not in seen:
+            seen.add(name)
+            out.append(name)
+    return out
+
+
+def load_action_backend(model_path: Path, labels: Optional[List[str]] = None, log=None):
+    """Load SlowFast from .pth (MMAction2) or .onnx (ONNX Runtime).
+
+    Returns (backend, multi_label, labels_used).
+    """
+    from mmengine.config import Config
+
+    labels_used = _resolve_model_labels(labels)
+    ckpt_n = _checkpoint_num_classes(model_path)
+    if ckpt_n and len(labels_used) != ckpt_n:
+        # Keep checkpoint head intact: pad from taxonomy or trim.
+        if len(labels_used) < ckpt_n:
+            for name in list(config.ACTION_LABELS) + _load_label_taxonomy()[0]:
+                if name not in labels_used:
+                    labels_used.append(name)
+                if len(labels_used) >= ckpt_n:
+                    break
+            while len(labels_used) < ckpt_n:
+                labels_used.append(f"class_{len(labels_used)}")
+        else:
+            labels_used = labels_used[:ckpt_n]
+        if log:
+            log(
+                f"[infer] aligned labels to checkpoint head ({ckpt_n}): {labels_used}"
+            )
 
     cfg = Config.fromfile(str(ACTION_CONFIG))
     if hasattr(cfg, "model") and "cls_head" in cfg.model:
-        cfg.model["cls_head"]["num_classes"] = len(labels)
+        cfg.model["cls_head"]["num_classes"] = len(labels_used)
     multi_label = _cfg_is_multilabel(cfg)
     suffix = model_path.suffix.lower()
     if suffix == ".onnx":
         backend = OnnxActionBackend(model_path)
         if log:
             log(f"[infer] SlowFast ONNX ({', '.join(backend.providers)})")
-        return backend, multi_label
+            log(f"[infer] decode labels={labels_used}")
+        return backend, multi_label, labels_used
     from mmaction.apis import init_recognizer
 
     device_action = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -534,7 +611,8 @@ def load_action_backend(model_path: Path, labels: List[str], log=None):
     action_model.eval()
     if log:
         log(f"[infer] SlowFast .pth on {device_action} (multi_label={multi_label})")
-    return PthActionBackend(action_model), multi_label
+        log(f"[infer] decode labels={labels_used}")
+    return PthActionBackend(action_model), multi_label, labels_used
 
 
 def _classify_crops(
@@ -567,7 +645,8 @@ def _get_live_models(checkpoint_path: Path) -> Dict[str, Any]:
 
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:64,expandable_segments:True")
     labels, activities = _load_label_taxonomy()
-    backend, multi_label = load_action_backend(checkpoint_path, labels)
+    backend, multi_label, labels_used = load_action_backend(checkpoint_path, labels)
+    activities_used = [a for a in activities if a in labels_used] or list(labels_used)
     init_default_scope("mmdet")
     det_model = init_detector(str(DET_CONFIG), str(DET_CHECKPOINT), device="cpu")
     _live_bundle = {
@@ -575,8 +654,8 @@ def _get_live_models(checkpoint_path: Path) -> Dict[str, Any]:
         "action_backend": backend,
         "action_model": backend,
         "det_model": det_model,
-        "labels": labels,
-        "activities": activities,
+        "labels": labels_used,
+        "activities": activities_used,
         "multi_label": multi_label,
         "device": getattr(backend, "kind", "pth"),
     }
@@ -695,11 +774,14 @@ def run_inference(
 
     log(f"[infer] video={video_path.name}")
     log(f"[infer] checkpoint={checkpoint_path.name}")
-    log(f"[infer] labels={labels}")
-    log(f"[infer] activities={activities}")
+    log(f"[infer] taxonomy labels={labels}")
+    log(f"[infer] taxonomy activities={activities}")
     log(f"[infer] activity_threshold={ACTIVITY_THRESHOLD:.0%}")
 
-    action_backend, multi_label = load_action_backend(checkpoint_path, labels, log=log)
+    action_backend, multi_label, labels_used = load_action_backend(
+        checkpoint_path, labels, log=log
+    )
+    activities_used = [a for a in activities if a in labels_used] or list(labels_used)
 
     init_default_scope("mmdet")
     det_model = init_detector(str(DET_CONFIG), str(DET_CHECKPOINT), device="cpu")
@@ -755,7 +837,7 @@ def run_inference(
                 crop = frames[fidx][max(0, y1) : y2, max(0, x1) : x2]
                 crops.append(crop)
             pred = _classify_crops(
-                action_backend, crops, labels, activities, multi_label
+                action_backend, crops, labels_used, activities_used, multi_label
             )
             for fidx, _ in window:
                 frame_labels[fidx] = pred
@@ -863,7 +945,7 @@ def run_inference(
         "output_video": str(final_out),
         "output_url": f"/api/test/result/{job_id}/video",
         "checkpoint": checkpoint_path.name,
-        "labels": labels,
+        "labels": labels_used,
         "persons": [
             {
                 "id": tid,
