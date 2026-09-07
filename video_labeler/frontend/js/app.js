@@ -32,6 +32,7 @@
     selectedVideos: new Set(),
     collabPollTimer: null,
     lockHeartbeatTimer: null,
+    transcodePollTimer: null,
   };
 
   const videoEl = $("video");
@@ -272,7 +273,8 @@
     if (v.processing_status === "transcoding") {
       processingHtml = `<div class="lock-badge processing">Converting to H.264…</div>`;
     } else if (v.processing_status === "failed") {
-      processingHtml = `<div class="lock-badge processing-failed">Convert failed</div>`;
+      const err = (v.processing_error || "Convert failed").replace(/"/g, "&quot;");
+      processingHtml = `<div class="lock-badge processing-failed" title="${err}">Unreadable / convert failed</div>`;
     }
     li.innerHTML = `
       <div class="video-row">
@@ -897,6 +899,68 @@
 
   async function loadVideos() {
     await fetchVideos(true);
+    await refreshTranscodeStatus();
+  }
+
+  async function refreshTranscodeStatus() {
+    const hint = $("transcodeHint");
+    const btn = $("btnRequeueTranscodes");
+    try {
+      const data = await api("/api/videos/transcode-status");
+      const stuck = data.stuck || 0;
+      const failed = data.failed || 0;
+      const pending = data.pending || 0;
+      const needs = data.needs_convert || 0;
+      const problem = stuck + failed;
+      if (hint) {
+        if (pending > 0) {
+          hint.hidden = false;
+          hint.textContent = `Converting ${pending} video(s) to H.264 in background…`;
+        } else if (problem > 0) {
+          hint.hidden = false;
+          hint.textContent = `${stuck} stuck · ${failed} failed · ${needs} need H.264 for browser playback`;
+        } else {
+          hint.hidden = true;
+          hint.textContent = "";
+        }
+      }
+      if (btn) {
+        btn.hidden = problem === 0 && pending === 0;
+        btn.disabled = pending > 0 && problem === 0;
+        btn.textContent = pending > 0
+          ? `Converting… (${pending} in queue)`
+          : `Retry H.264 conversions (${problem})`;
+      }
+      if (pending > 0 && !state.transcodePollTimer) {
+        state.transcodePollTimer = setInterval(async () => {
+          await refreshTranscodeStatus();
+          const st = await api("/api/videos/transcode-status");
+          if (!(st.pending > 0)) {
+            clearInterval(state.transcodePollTimer);
+            state.transcodePollTimer = null;
+            await reloadVideosKeepingScroll();
+          }
+        }, 5000);
+      }
+    } catch (_) {
+      if (hint) hint.hidden = true;
+      if (btn) btn.hidden = true;
+    }
+  }
+
+  async function requeueTranscodes() {
+    const btn = $("btnRequeueTranscodes");
+    if (btn) btn.disabled = true;
+    try {
+      const data = await api("/api/videos/requeue-transcodes", { method: "POST" });
+      toast(data.message || `Queued ${data.queued || 0} video(s)`, "ok");
+      await reloadVideosKeepingScroll();
+      await refreshTranscodeStatus();
+    } catch (err) {
+      toast(err.message || "Could not re-queue conversions", "error");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   function collabDisplayName() {
@@ -1196,8 +1260,24 @@
 
     const listed = (state.videos || []).find((v) => v.id === id);
     if (listed?.processing_status === "transcoding") {
-      toast("This video is still converting — try again in a moment", "error");
+      try {
+        await api(`/api/videos/${encodeURIComponent(id)}/transcode`, { method: "POST" });
+        toast("Re-queued H.264 conversion — try again shortly", "ok");
+      } catch (_) {
+        toast("This video is still converting — try again in a moment", "error");
+      }
       return;
+    }
+    if (listed?.processing_status === "failed") {
+      try {
+        await api(`/api/videos/${encodeURIComponent(id)}/transcode`, { method: "POST" });
+        toast("Retrying H.264 conversion…", "ok");
+        await refreshTranscodeStatus();
+        return;
+      } catch (err) {
+        toast(err.message || "Could not retry conversion", "error");
+        return;
+      }
     }
 
     const previousId = state.videoId;
@@ -1362,6 +1442,9 @@
   });
 
   $("btnRefresh").onclick = () => loadVideos().catch((e) => toast(e.message, "error"));
+  $("btnRequeueTranscodes")?.addEventListener("click", () => {
+    requeueTranscodes().catch((e) => toast(e.message, "error"));
+  });
 
   function setNavTab(tab) {
     const tabs = { videos: "navTabVideos", dataset: "navTabDataset", classes: "navTabClasses" };

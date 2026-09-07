@@ -141,6 +141,15 @@ html, body {
   font: 500 0.92rem var(--font);
 }
 
+.transcode-hint {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.nav-panel .btn-block.btn-small {
+  margin-bottom: 10px;
+}
 .hint {
   margin: 8px 0 0;
   color: var(--muted);

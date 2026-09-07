@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -26,8 +27,20 @@ from .export import (
     save_annotation,
     sync_train_config_labels,
 )
-from .media import is_browser_playable, probe_codecs
-from .transcode_queue import enqueue_video_transcode, is_transcode_pending
+from .media import (
+    is_browser_playable,
+    probe_codecs,
+    probe_video_meta,
+    try_repair_mp4,
+    validate_video_file,
+)
+from .transcode_queue import (
+    enqueue_video_transcode,
+    get_transcode_status,
+    is_transcode_pending,
+    requeue_stuck_transcodes,
+    resume_stuck_on_startup,
+)
 from .infer import (
     TEST_INPUT_DIR,
     TEST_OUTPUT_DIR,
@@ -69,6 +82,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def _startup_resume_transcodes():
+    def _run() -> None:
+        try:
+            resume_stuck_on_startup()
+        except Exception as exc:
+            print(f"[transcode queue] startup resume skipped: {exc}")
+
+    threading.Thread(target=_run, name="am-startup-transcode", daemon=True).start()
 
 
 class Segment(BaseModel):
@@ -115,21 +139,15 @@ def _safe_stem(name: str) -> str:
 
 
 def _video_meta(path: Path) -> Dict[str, Any]:
-    cap = cv2.VideoCapture(str(path))
-    if not cap.isOpened():
-        return {"fps": 30, "width": 0, "height": 0, "total_frames": 0, "duration": 0}
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 30)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.release()
-    duration = total / fps if fps > 0 else 0
+    """Prefer ffprobe so corrupt MP4s don't spam OpenCV 'moov atom not found'."""
+    meta = probe_video_meta(path)
+    meta.pop("readable", None)
     return {
-        "fps": fps,
-        "width": width,
-        "height": height,
-        "total_frames": total,
-        "duration": duration,
+        "fps": meta.get("fps", 30),
+        "width": meta.get("width", 0),
+        "height": meta.get("height", 0),
+        "total_frames": meta.get("total_frames", 0),
+        "duration": meta.get("duration", 0),
     }
 
 
@@ -244,13 +262,30 @@ def _rebuild_video_index() -> List[Dict[str, Any]]:
     video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
     videos_on_disk = {}
     for path in sorted(config.VIDEOS_DIR.iterdir()):
-        if path.suffix.lower() in video_exts:
-            videos_on_disk[path.stem] = path
+        if path.name.startswith("."):
+            continue
+        if path.suffix.lower() not in video_exts:
+            continue
+        # Prefer final .mp4 over leftover *_upload / staging names for same stem
+        stem = path.stem
+        stem = _normalize_video_stem(stem)
+        prev = videos_on_disk.get(stem)
+        if prev is None or (path.suffix.lower() == ".mp4" and prev.suffix.lower() != ".mp4"):
+            videos_on_disk[stem] = path
 
     index = []
     for stem, path in videos_on_disk.items():
         ann = load_annotation(stem)
-        if ann and ann.get("fps"):
+        status = (ann or {}).get("processing_status") or "ready"
+        if ann and ann.get("fps") and (ann.get("width") or 0) > 0:
+            meta = {
+                "fps": ann.get("fps", 30),
+                "width": ann.get("width", 0),
+                "height": ann.get("height", 0),
+                "total_frames": ann.get("total_frames", 0),
+                "duration": ann.get("duration", 0),
+            }
+        elif ann and ann.get("processing_status") == "failed":
             meta = {
                 "fps": ann.get("fps", 30),
                 "width": ann.get("width", 0),
@@ -259,15 +294,35 @@ def _rebuild_video_index() -> List[Dict[str, Any]]:
                 "duration": ann.get("duration", 0),
             }
         else:
-            meta = _video_meta(path)
-            if ann is None:
-                ann = {
-                    "video_id": stem,
-                    "filename": path.name,
-                    **meta,
-                    "segments": [],
-                }
-                save_annotation(stem, ann)
+            check = validate_video_file(path)
+            if not check.get("ok"):
+                meta = {"fps": 30, "width": 0, "height": 0, "total_frames": 0, "duration": 0}
+                if status not in ("transcoding",):
+                    status = "failed"
+                    if ann is None:
+                        ann = {
+                            "video_id": stem,
+                            "filename": path.name,
+                            **meta,
+                            "segments": [],
+                            "processing_status": "failed",
+                            "processing_error": check.get("error") or "Unreadable video",
+                        }
+                        save_annotation(stem, ann)
+                    elif ann.get("processing_status") != "failed":
+                        ann["processing_status"] = "failed"
+                        ann["processing_error"] = check.get("error") or "Unreadable video"
+                        save_annotation(stem, ann)
+            else:
+                meta = _video_meta(path)
+                if ann is None:
+                    ann = {
+                        "video_id": stem,
+                        "filename": path.name,
+                        **meta,
+                        "segments": [],
+                    }
+                    save_annotation(stem, ann)
         segs = (ann or {}).get("segments") or []
         activities = []
         seen_act = set()
@@ -286,7 +341,8 @@ def _rebuild_video_index() -> List[Dict[str, Any]]:
             "last_annotator": (ann or {}).get("last_annotator") or "",
             "updated_at": (ann or {}).get("updated_at") or "",
             "sort_ts": _video_sort_ts(ann, path),
-            "processing_status": (ann or {}).get("processing_status") or "ready",
+            "processing_status": status,
+            "processing_error": (ann or {}).get("processing_error") or "",
             **meta,
         })
     _video_index_cache = index
@@ -307,7 +363,8 @@ def _get_video_index(force: bool = False) -> List[Dict[str, Any]]:
         )
         dir_count = sum(
             1 for p in config.VIDEOS_DIR.iterdir()
-            if p.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+            if not p.name.startswith(".")
+            and p.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv", ".webm"}
         )
         if latest <= _video_index_mtime and dir_count == len(_video_index_cache):
             return _video_index_cache
@@ -358,13 +415,50 @@ def list_videos(
     }
 
 
+def _normalize_video_stem(stem: str) -> str:
+    if stem.endswith("_upload"):
+        return stem[: -len("_upload")]
+    return stem
+
+
+def _library_video_paths(video_id: str) -> List[Path]:
+    """All on-disk video files belonging to a library id (incl. *_upload staging names)."""
+    video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+    found: Dict[str, Path] = {}
+    for path in config.VIDEOS_DIR.iterdir():
+        if path.name.startswith("."):
+            continue
+        if path.suffix.lower() not in video_exts:
+            continue
+        norm = _normalize_video_stem(path.stem)
+        if norm == video_id or path.stem == video_id:
+            found[str(path.resolve())] = path
+    ann = load_annotation(video_id) or {}
+    fn = ann.get("filename")
+    if fn:
+        p = config.VIDEOS_DIR / fn
+        if p.exists():
+            found[str(p.resolve())] = p
+    return list(found.values())
+
+
+def _primary_library_video(video_id: str) -> Optional[Path]:
+    """Best file to serve / transcode for a library video id."""
+    paths = _library_video_paths(video_id)
+    if not paths:
+        return None
+    for path in paths:
+        if path.stem == video_id and path.suffix.lower() == ".mp4":
+            return path
+    for path in paths:
+        if not path.stem.endswith("_upload"):
+            return path
+    return sorted(paths, key=lambda p: p.name)[0]
+
+
 def _find_library_video(stem: str) -> Optional[Path]:
     """Return an existing library video path for this id, if any."""
-    video_exts = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
-    for path in sorted(config.VIDEOS_DIR.glob(f"{stem}.*")):
-        if path.suffix.lower() in video_exts and not path.name.startswith("."):
-            return path
-    return None
+    return _primary_library_video(stem)
 
 
 def _ingest_uploaded_video(file: UploadFile) -> Dict[str, Any]:
@@ -399,12 +493,25 @@ def _ingest_uploaded_video(file: UploadFile) -> Dict[str, Any]:
     with open(raw_dest, "wb") as out:
         shutil.copyfileobj(file.file, out)
 
+    # Reject empty / truncated / moov-missing files early (clear API error).
+    check = validate_video_file(raw_dest)
+    if not check.get("ok"):
+        repaired = try_repair_mp4(raw_dest)
+        if repaired and repaired.exists():
+            raw_dest.unlink(missing_ok=True)
+            raw_dest = repaired
+            check = validate_video_file(raw_dest)
+        if not check.get("ok"):
+            err = check.get("error") or "Unreadable video file"
+            raw_dest.unlink(missing_ok=True)
+            raise HTTPException(400, err)
+
     vcodec, _ = probe_codecs(raw_dest)
     final_path = config.VIDEOS_DIR / f"{stem}.mp4"
     converted = False
     processing = False
     try:
-        if is_browser_playable(raw_dest) and ext == ".mp4":
+        if is_browser_playable(raw_dest) and raw_dest.suffix.lower() == ".mp4":
             raw_dest.replace(final_path)
         elif is_browser_playable(raw_dest):
             fallback = config.VIDEOS_DIR / f"{stem}{ext}"
@@ -420,8 +527,9 @@ def _ingest_uploaded_video(file: UploadFile) -> Dict[str, Any]:
         if final_path.exists():
             final_path.unlink(missing_ok=True)
         fallback = config.VIDEOS_DIR / f"{stem}{ext}"
-        raw_dest.replace(fallback)
-        final_path = fallback
+        if raw_dest.exists():
+            raw_dest.replace(fallback)
+            final_path = fallback
         print(f"[upload] ingest failed, keeping original: {exc}")
 
     meta = _video_meta(final_path)
@@ -513,56 +621,63 @@ async def upload_video(file: List[UploadFile] = File(...)):
     }
 
 
+@app.get("/api/videos/transcode-status")
+def videos_transcode_status():
+    """How many library videos need H.264 conversion / are stuck / failed."""
+    return get_transcode_status()
+
+
+@app.post("/api/videos/requeue-transcodes")
+def videos_requeue_transcodes(
+    include_failed: bool = True,
+    include_stuck: bool = True,
+    limit: int = 0,
+):
+    """Re-queue stuck or failed HEVC → H.264 conversions."""
+    return requeue_stuck_transcodes(
+        include_failed=include_failed,
+        include_stuck=include_stuck,
+        limit=limit or None,
+    )
+
+
 @app.post("/api/videos/{video_id}/transcode")
 def transcode_video(video_id: str):
     """Convert an existing library video to H.264 for browser playback."""
     if is_transcode_pending(video_id):
         raise HTTPException(409, "Video is already converting in the background")
-    matches = sorted(config.VIDEOS_DIR.glob(f"{video_id}.*"))
+    matches = _library_video_paths(video_id)
     if not matches:
         raise HTTPException(404, "Video not found")
-    src = matches[0]
+    src = _primary_library_video(video_id) or matches[0]
     ann = load_annotation(video_id) or {}
-    if ann.get("processing_status") == "transcoding":
-        raise HTTPException(409, "Video is already converting in the background")
     if is_browser_playable(src):
+        if ann.get("processing_status") in ("transcoding", "failed"):
+            ann["processing_status"] = "ready"
+            ann.pop("processing_error", None)
+            save_annotation(video_id, ann)
+            _get_video_index(force=True)
         return {"ok": True, "already_playable": True, "filename": src.name}
-    try:
-        from .media import transcode_to_h264
-
-        out = config.VIDEOS_DIR / f"{video_id}.mp4"
-        tmp = config.VIDEOS_DIR / f".{video_id}_tmp.mp4"
-        transcode_to_h264(src, tmp)
-        if src.resolve() != out.resolve():
-            src.unlink(missing_ok=True)
-        tmp.replace(out)
-        meta = _video_meta(out)
-        ann = load_annotation(video_id) or {}
-        ann.update(
-            {
-                "filename": out.name,
-                **meta,
-                "codec": probe_codecs(out)[0],
-                "converted_to_h264": True,
-                "processing_status": "ready",
-            }
-        )
-        ann.pop("processing_error", None)
-        save_annotation(video_id, ann)
-        bump_library_revision()
-        return {"ok": True, "video": {"id": video_id, "filename": out.name, **meta}}
-    except Exception as exc:
-        raise HTTPException(500, str(exc)) from exc
+    vcodec, _ = probe_codecs(src)
+    dest = config.VIDEOS_DIR / f"{video_id}.mp4"
+    ann["processing_status"] = "transcoding"
+    ann["processing_started_at"] = datetime.utcnow().isoformat() + "Z"
+    ann.pop("processing_error", None)
+    save_annotation(video_id, ann)
+    if not enqueue_video_transcode(video_id, src, dest, vcodec or ""):
+        raise HTTPException(409, "Video is already converting in the background")
+    _get_video_index(force=True)
+    return {"ok": True, "queued": True, "video_id": video_id}
 
 
 def _delete_video_files(video_id: str) -> bool:
     """Delete video file(s), annotation, and lock. Returns True if a video existed."""
-    matches = list(config.VIDEOS_DIR.glob(f"{video_id}.*"))
-    if not matches:
+    matches = _library_video_paths(video_id)
+    ann = config.ANNOTATIONS_DIR / f"{video_id}.json"
+    if not matches and not ann.exists():
         return False
     for m in matches:
         m.unlink(missing_ok=True)
-    ann = config.ANNOTATIONS_DIR / f"{video_id}.json"
     if ann.exists():
         ann.unlink(missing_ok=True)
     for lock in list(collab_status()["locks"]):
@@ -608,10 +723,9 @@ def bulk_delete_videos(payload: BulkDeleteRequest):
 
 @app.get("/api/videos/{video_id}/file")
 def get_video_file(video_id: str):
-    matches = list(config.VIDEOS_DIR.glob(f"{video_id}.*"))
-    if not matches:
+    path = _primary_library_video(video_id)
+    if not path:
         raise HTTPException(404, "Video not found")
-    path = matches[0]
     media = {
         ".mp4": "video/mp4",
         ".webm": "video/webm",
@@ -624,10 +738,10 @@ def get_video_file(video_id: str):
 
 @app.get("/api/videos/{video_id}/meta")
 def get_video_meta(video_id: str):
-    matches = list(config.VIDEOS_DIR.glob(f"{video_id}.*"))
-    if not matches:
+    path = _primary_library_video(video_id)
+    if not path:
         raise HTTPException(404, "Video not found")
-    meta = _video_meta(matches[0])
+    meta = _video_meta(path)
     ann = load_annotation(video_id) or {}
     # Activity-only: drop posture-only segments and strip posture field.
     segs = ann.get("segments", []) or []
@@ -644,7 +758,7 @@ def get_video_meta(video_id: str):
         clean_segs.append(s)
     return {
         "id": video_id,
-        "filename": matches[0].name,
+        "filename": path.name,
         **meta,
         "segments": clean_segs,
         "last_annotator": ann.get("last_annotator") or "",
@@ -665,8 +779,7 @@ def get_annotation(video_id: str):
 
 @app.put("/api/annotations/{video_id}")
 def put_annotation(video_id: str, payload: AnnotationPayload):
-    matches = list(config.VIDEOS_DIR.glob(f"{video_id}.*"))
-    if not matches:
+    if not _primary_library_video(video_id):
         raise HTTPException(404, "Video not found")
     for seg in payload.segments:
         names = config.segment_class_names(seg.model_dump())
@@ -892,11 +1005,22 @@ async def test_upload(file: UploadFile = File(...)):
     dest = TEST_INPUT_DIR / f"{stem}_{uuid.uuid4().hex[:6]}{ext}"
     with open(dest, "wb") as out:
         shutil.copyfileobj(file.file, out)
+    check = validate_video_file(dest)
+    if not check.get("ok"):
+        repaired = try_repair_mp4(dest)
+        if repaired and repaired.exists():
+            dest.unlink(missing_ok=True)
+            dest = repaired
+            check = validate_video_file(dest)
+        if not check.get("ok"):
+            err = check.get("error") or "Unreadable video file"
+            dest.unlink(missing_ok=True)
+            raise HTTPException(400, err)
     # Convert to H.264 if needed for consistency
     try:
-        from .media import is_browser_playable, transcode_to_h264
-
         if not is_browser_playable(dest):
+            from .media import transcode_to_h264
+
             h264 = dest.with_suffix(".mp4")
             tmp = dest.with_name(f".{dest.stem}_tmp.mp4")
             transcode_to_h264(dest, tmp)
@@ -905,7 +1029,8 @@ async def test_upload(file: UploadFile = File(...)):
             tmp.replace(h264)
             dest = h264
     except Exception as exc:
-        print(f"[test upload] transcode skipped: {exc}")
+        dest.unlink(missing_ok=True)
+        raise HTTPException(400, f"Could not prepare video for playback: {exc}") from exc
     return {"ok": True, "path": str(dest), "filename": dest.name, "id": dest.stem}
 
 

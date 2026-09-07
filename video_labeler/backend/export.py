@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import random
 import shutil
+import subprocess
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -14,12 +16,70 @@ import cv2
 from . import config
 
 
+def _decord_safe_size(width: int, height: int, min_side: int = 112) -> Tuple[int, int]:
+    """
+    Make frame size friendly for Decord / H.264 (multiples of 16, not tiny).
+    Tiny odd crops (e.g. 72x168) crash Decord with size-mismatch errors.
+    """
+    width = max(1, int(width))
+    height = max(1, int(height))
+    scale = max(1.0, float(min_side) / float(min(width, height)))
+    width = int(round(width * scale))
+    height = int(round(height * scale))
+    width = max(16, ((width + 15) // 16) * 16)
+    height = max(16, ((height + 15) // 16) * 16)
+    return width, height
+
+
+def _reencode_h264(src: Path, dest: Optional[Path] = None) -> Path:
+    """Re-encode clip to H.264 yuv420p for Decord compatibility."""
+    if not shutil.which("ffmpeg"):
+        return src
+    out = dest or src
+    tmp = src.with_name(f".{src.stem}_h264tmp.mp4")
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(src),
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "23",
+        "-an",
+        "-movflags",
+        "+faststart",
+        str(tmp),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"ffmpeg re-encode failed: {(proc.stderr or '')[-400:]}")
+    if out.resolve() == src.resolve():
+        tmp.replace(src)
+        return src
+    tmp.replace(out)
+    return out
+
+
 def load_annotation(video_id: str) -> Optional[Dict[str, Any]]:
     path = config.ANNOTATIONS_DIR / f"{video_id}.json"
     if not path.exists():
         return None
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            text = f.read().strip()
+        if not text:
+            print(f"[annotations] empty file, ignoring: {path.name}")
+            return None
+        return json.loads(text)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[annotations] corrupt file, ignoring: {path.name} ({exc})")
+        return None
 
 
 def count_annotations() -> Dict[str, Any]:
@@ -61,8 +121,16 @@ def save_annotation(video_id: str, data: Dict[str, Any]) -> Path:
     path = config.ANNOTATIONS_DIR / f"{video_id}.json"
     data["video_id"] = video_id
     data["updated_at"] = datetime.utcnow().isoformat() + "Z"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    tmp = path.with_name(f".{path.stem}.tmp.json")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        tmp.replace(path)
+    except OSError as exc:
+        tmp.unlink(missing_ok=True)
+        if exc.errno == 28:  # ENOSPC
+            raise RuntimeError("Disk full — free space before saving annotations") from exc
+        raise
     return path
 
 
@@ -117,11 +185,21 @@ def export_segment_clip(
         cap.release()
         raise RuntimeError("Failed to read start frame")
     sample = _crop_frame(frame, bbox, width, height)
-    out_h, out_w = sample.shape[:2]
+    raw_h, raw_w = sample.shape[:2]
+    out_w, out_h = _decord_safe_size(raw_w, raw_h)
+    if sample.shape[1] != out_w or sample.shape[0] != out_h:
+        sample = cv2.resize(sample, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Write via temp raw mp4 then re-encode H.264 (Decord-safe).
+    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (out_w, out_h))
+    writer = cv2.VideoWriter(str(tmp_path), fourcc, max(fps, 1.0), (out_w, out_h))
+    if not writer.isOpened():
+        cap.release()
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError("Failed to open VideoWriter for export clip")
     writer.write(sample)
 
     written = 1
@@ -131,12 +209,16 @@ def export_segment_clip(
             break
         cropped = _crop_frame(frame, bbox, width, height)
         if cropped.shape[0] != out_h or cropped.shape[1] != out_w:
-            cropped = cv2.resize(cropped, (out_w, out_h))
+            cropped = cv2.resize(cropped, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
         writer.write(cropped)
         written += 1
 
     writer.release()
     cap.release()
+    try:
+        _reencode_h264(tmp_path, output_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
     names = config.segment_class_names(segment)
     return {
         "path": str(output_path),
@@ -145,6 +227,8 @@ def export_segment_clip(
         "labels": names,
         "start_frame": start,
         "end_frame": end,
+        "width": out_w,
+        "height": out_h,
     }
 
 

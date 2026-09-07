@@ -45,6 +45,10 @@
             <span class="count-total" id="libraryCount">0 videos</span>
             <button class="linkish" id="btnRefresh" type="button">Refresh</button>
           </div>
+          <p class="hint transcode-hint" id="transcodeHint" hidden></p>
+          <button class="btn btn-ghost btn-block btn-small" id="btnRequeueTranscodes" type="button" hidden>
+            Retry H.264 conversions
+          </button>
           <label class="btn btn-primary file-btn btn-block">
             Upload videos
             <input type="file" id="fileInput" accept="video/*" multiple hidden />
