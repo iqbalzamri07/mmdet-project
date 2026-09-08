@@ -477,6 +477,23 @@ class PthActionBackend:
         self.kind = "pth"
 
     def scores_from_crops(self, crops: List[np.ndarray]) -> Optional[np.ndarray]:
+        tensor = _crops_to_ncthw(crops)
+        if tensor is None:
+            return None
+        try:
+            device = next(self.model.parameters()).device
+            x = torch.from_numpy(np.ascontiguousarray(tensor)).to(device)
+            self.model.eval()
+            with torch.no_grad():
+                feat = self.model.backbone(x)
+                logits = self.model.cls_head(feat)
+            if isinstance(logits, (tuple, list)):
+                logits = logits[0]
+            return logits.detach().float().cpu().numpy().reshape(-1)
+        except Exception:
+            return self._scores_from_crops_file(crops)
+
+    def _scores_from_crops_file(self, crops: List[np.ndarray]) -> Optional[np.ndarray]:
         from mmaction.apis import inference_recognizer
 
         valid = [c for c in crops if c is not None and c.size > 0 and c.shape[0] > 1 and c.shape[1] > 1]
@@ -496,8 +513,6 @@ class PthActionBackend:
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
-            torch.cuda.empty_cache()
-            gc.collect()
 
 
 class OnnxActionBackend:
@@ -714,6 +729,7 @@ def run_live_detect(frame: np.ndarray, checkpoint_path: Path) -> Dict[str, Any]:
     with _live_det_lock:
         det = _ensure_live_detector()
         boxes = _detect_persons(det, frame)
+        _live_bundle["last_boxes"] = list(boxes)
     h, w = frame.shape[:2]
     return {
         "ok": True,
@@ -735,9 +751,12 @@ def run_live_clip(frames: List[np.ndarray], checkpoint_path: Path) -> Dict[str, 
         return {"ok": False, "error": f"Detector missing: {DET_CHECKPOINT}", "persons": []}
 
     last = frames[-1]
-    with _live_det_lock:
-        det = _ensure_live_detector()
-        boxes = _detect_persons(det, last)
+    boxes = list(_live_bundle.get("last_boxes") or [])
+    if not boxes:
+        with _live_det_lock:
+            det = _ensure_live_detector()
+            boxes = _detect_persons(det, last)
+            _live_bundle["last_boxes"] = list(boxes)
     bundle = _ensure_live_action(checkpoint_path)
     persons = []
     with _live_action_lock:

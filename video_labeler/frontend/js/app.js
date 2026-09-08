@@ -3083,8 +3083,8 @@
   }
 
   const LIVE_CLIP = 16;
-  const LIVE_MIN_CLIP = 8;
-  const LIVE_CAPTURE_MS = 80;
+  const LIVE_MIN_CLIP = 5;
+  const LIVE_CAPTURE_MS = 50;
 
   function liveCheckpoint() {
     return $("modelSelect")?.value || "";
@@ -3115,6 +3115,7 @@
       }
     } finally {
       testState.liveDetectBusy = false;
+      if (testState.cameraOn) setTimeout(() => pumpLiveDetect(), 0);
     }
   }
 
@@ -3144,6 +3145,7 @@
       }
     } finally {
       testState.liveClipBusy = false;
+      if (testState.cameraOn) setTimeout(() => pumpLiveClip(), 0);
     }
   }
 
