@@ -125,14 +125,21 @@
     return chip;
   }
 
+  let _ignoreActivityFilterChange = false;
+
   function syncActivityFilterSelect() {
     const sel = $("activityFilter");
     if (!sel) return;
-    fillSelect(sel, state.activities || [], [{ value: "", label: "All activities" }]);
-    if (state.activityFilter && [...sel.options].some((o) => o.value === state.activityFilter)) {
-      sel.value = state.activityFilter;
-    } else if (!state.activityFilter) {
-      sel.value = "";
+    _ignoreActivityFilterChange = true;
+    try {
+      fillSelect(sel, state.activities || [], [{ value: "", label: "All activities" }]);
+      if (state.activityFilter && [...sel.options].some((o) => o.value === state.activityFilter)) {
+        sel.value = state.activityFilter;
+      } else if (!state.activityFilter) {
+        sel.value = "";
+      }
+    } finally {
+      _ignoreActivityFilterChange = false;
     }
   }
 
@@ -455,11 +462,21 @@
     }
   }
 
-  async function refreshVideoPagingCounts() {
+  function videoListParams(extra = {}) {
+    const params = new URLSearchParams({ per_page: String(PER_PAGE) });
     const q = (state.videoQuery || "").trim();
-    const params = new URLSearchParams({ per_page: PER_PAGE, page: "1" });
+    const activity = (state.activityFilter || "").trim();
     if (q) params.set("q", q);
-    params.set("labeled", "false");
+    if (activity) params.set("activity", activity);
+    Object.entries(extra).forEach(([key, value]) => {
+      if (value == null || value === "") return;
+      params.set(key, String(value));
+    });
+    return params;
+  }
+
+  async function refreshVideoPagingCounts() {
+    const params = videoListParams({ page: 1, labeled: "false" });
     const needData = await api(`/api/videos?${params}`);
     params.set("labeled", "true");
     const hasData = await api(`/api/videos?${params}`);
@@ -483,16 +500,11 @@
     _libraryScrollRestore = captureLibraryScroll();
     const needPages = state.videoPage.need;
     const hasPages = state.videoPage.has;
-    const q = (state.videoQuery || "").trim();
-    const base = new URLSearchParams({ per_page: PER_PAGE });
-    if (q) base.set("q", q);
 
     const needVideos = [];
     let needMeta = null;
     for (let p = 1; p <= needPages; p++) {
-      const params = new URLSearchParams(base);
-      params.set("page", String(p));
-      params.set("labeled", "false");
+      const params = videoListParams({ page: p, labeled: "false" });
       needMeta = await api(`/api/videos?${params}`);
       needVideos.push(...(needMeta.videos || []));
     }
@@ -500,9 +512,7 @@
     const hasVideos = [];
     let hasMeta = null;
     for (let p = 1; p <= hasPages; p++) {
-      const params = new URLSearchParams(base);
-      params.set("page", String(p));
-      params.set("labeled", "true");
+      const params = videoListParams({ page: p, labeled: "true" });
       hasMeta = await api(`/api/videos?${params}`);
       hasVideos.push(...(hasMeta.videos || []));
     }
@@ -596,6 +606,7 @@
       await refreshVideoPagingCounts();
       renderVideoList();
       await loadLabelCounts();
+      if (state.activityFilter) setLibraryTab("has");
       const count = data.count ?? deleted.size;
       if (wasOpen && nextVideo) {
         await selectVideo(nextVideo.id);
@@ -885,17 +896,10 @@
       state.videoPage = { need: 1, has: 1 };
       state.videos = [];
     }
-    const q = (state.videoQuery || "").trim();
-    const activity = (state.activityFilter || "").trim();
-    const params = new URLSearchParams({ per_page: PER_PAGE });
-    if (q) params.set("q", q);
-    if (activity) params.set("activity", activity);
-
-    params.set("page", state.videoPage.need);
-    params.set("labeled", "false");
+    const params = videoListParams({ page: state.videoPage.need, labeled: "false" });
     const needData = await api(`/api/videos?${params}`);
 
-    params.set("page", state.videoPage.has);
+    params.set("page", String(state.videoPage.has));
     params.set("labeled", "true");
     const hasData = await api(`/api/videos?${params}`);
 
@@ -1401,6 +1405,7 @@
     renderAnnotateMeta(state.meta);
     await reloadVideosKeepingScroll();
     await loadLabelCounts();
+    if (state.activityFilter) setLibraryTab("has");
     if (offerNext) {
       toast(`Saved by ${annotator}. Click Next video to continue.`, "ok");
       $("btnNextUnlabeled")?.classList.add("pulse-once");
@@ -1520,6 +1525,7 @@
   });
 
   $("activityFilter")?.addEventListener("change", async (e) => {
+    if (_ignoreActivityFilterChange) return;
     state.activityFilter = e.target.value || "";
     renderLabels();
     if (state.activityFilter) setLibraryTab("has");
@@ -1678,13 +1684,10 @@
     let loaded = 0;
     while (loaded < count && state.videoPage.need < needPages) {
       state.videoPage.need++;
-      const q = (state.videoQuery || "").trim();
-      const params = new URLSearchParams({
-        per_page: PER_PAGE,
-        page: String(state.videoPage.need),
+      const params = videoListParams({
+        page: state.videoPage.need,
         labeled: "false",
       });
-      if (q) params.set("q", q);
       const needData = await api(`/api/videos?${params}`);
       const existingIds = new Set(state.videos.map((v) => v.id));
       (needData.videos || []).forEach((v) => {
