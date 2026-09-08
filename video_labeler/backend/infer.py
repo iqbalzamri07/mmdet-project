@@ -36,7 +36,9 @@ WINDOW_STRIDE = 8
 DET_THRESHOLD = 0.7
 TARGET_SIZE = (160, 160)
 CONFIDENCE_THRESHOLD = 0.70
-ACTIVITY_THRESHOLD = 0.60
+# Below this sigmoid/softmax score → label as "others" (not a trained activity).
+ACTIVITY_THRESHOLD = 0.90
+OTHERS_LABEL = "others"
 
 for d in (TEST_INPUT_DIR, TEST_OUTPUT_DIR, TEST_JOBS_DIR):
     d.mkdir(parents=True, exist_ok=True)
@@ -396,9 +398,16 @@ def _best_in_group(
 
 
 def _compose_prediction(activity: str, a_score: float) -> Dict[str, Any]:
-    display = activity if activity else "unknown"
+    # Low confidence → "others" instead of forcing a trained class.
+    if not activity or float(a_score) < ACTIVITY_THRESHOLD:
+        return {
+            "label": OTHERS_LABEL,
+            "activity": OTHERS_LABEL,
+            "activity_score": round(float(a_score), 4),
+            "score": round(float(a_score), 4),
+        }
     return {
-        "label": display,
+        "label": activity,
         "activity": activity,
         "activity_score": round(a_score, 4),
         "score": round(float(a_score), 4),
@@ -417,15 +426,13 @@ def _decode_activity(
     looks_logits = raw.min() < 0 or raw.max() > 1.5
     if looks_softmax:
         probs = raw / (raw.sum() + 1e-8)
-        a_thr = 0.15
     elif multi_label or not looks_logits:
         probs = _sigmoid(raw) if looks_logits else raw
-        a_thr = ACTIVITY_THRESHOLD
     else:
         probs = _softmax(raw)
-        a_thr = 0.15
     group = activities or labels[:n]
-    activity, a_score = _best_in_group(labels[:n], probs, group, a_thr)
+    # Always pick best class score, then apply 80% others threshold in compose.
+    activity, a_score = _best_in_group(labels[:n], probs, group, threshold=0.0)
     return _compose_prediction(activity, a_score)
 
 
@@ -696,7 +703,7 @@ def run_live_clip(frames: List[np.ndarray], checkpoint_path: Path) -> Dict[str, 
                 {
                     "id": i,
                     "bbox": [int(x1), int(y1), int(x2), int(y2)],
-                    "label": pred.get("label") or "unknown",
+                    "label": pred.get("label") or OTHERS_LABEL,
                     "activity": pred.get("activity") or "",
                     "score": pred.get("score", 0),
                     "activity_score": pred.get("activity_score", 0),
@@ -906,10 +913,10 @@ def run_inference(
             elif tid is not None and tid in summary:
                 pred = summary[tid]
             if pred:
-                lab = pred.get("label") or "unknown"
+                lab = pred.get("label") or OTHERS_LABEL
                 conf = float(pred.get("score") or 0.0)
-                if lab == "unknown":
-                    text = f"P{tid}: unknown"
+                if lab == OTHERS_LABEL:
+                    text = f"P{tid}: {OTHERS_LABEL} {conf * 100:.0f}%"
                 else:
                     text = f"P{tid}: {lab} {conf * 100:.0f}%"
 

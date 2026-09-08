@@ -19,7 +19,8 @@
     pendingEnd: null,
     editingSegIdx: null,
     cropMode: false,
-    cropDraft: null, // {x1,y1,x2,y2} in video pixel space
+    crops: [], // committed person boxes [{x1,y1,x2,y2}, ...]
+    cropDraft: null, // box currently being drawn
     drawing: false,
     drawOrigin: null,
     trainJobId: null,
@@ -186,6 +187,7 @@
 
     const activitySel = $("activitySelect");
     if (activitySel) fillSelect(activitySel, state.activities || [], [{ value: "", label: "none" }]);
+    renderCropList();
     syncActivityFilterSelect();
     const totalEl = $("classCountTotal");
     if (totalEl) {
@@ -622,6 +624,7 @@
     state.editingSegIdx = null;
     state.pendingStart = null;
     state.pendingEnd = null;
+    state.crops = [];
     state.cropDraft = null;
     updateCropWarn();
     updatePending();
@@ -638,10 +641,11 @@
     $("activitySelect").value = seg.activity || "";
     if (seg.bbox?.length === 4) {
       const [x1, y1, x2, y2] = seg.bbox.map(Number);
-      state.cropDraft = { x1, y1, x2, y2 };
+      state.crops = [{ x1, y1, x2, y2, activity: seg.activity || "" }];
     } else {
-      state.cropDraft = null;
+      state.crops = [];
     }
+    state.cropDraft = null;
     updateCropWarn();
     updatePending();
     updateSegmentEditorUI();
@@ -811,6 +815,16 @@
     ctx.lineWidth = style.lineWidth ?? 2;
     ctx.fillRect(x, y, w, h);
     ctx.strokeRect(x, y, w, h);
+    if (style.label) {
+      ctx.font = "600 12px ui-sans-serif, system-ui, sans-serif";
+      const pad = 4;
+      const tw = ctx.measureText(style.label).width;
+      const ty = Math.max(12, y - 4);
+      ctx.fillStyle = style.stroke;
+      ctx.fillRect(x, ty - 14, tw + pad * 2, 16);
+      ctx.fillStyle = "#fff";
+      ctx.fillText(style.label, x + pad, ty - 2);
+    }
   }
 
   function drawOverlay() {
@@ -825,10 +839,20 @@
         });
       }
     });
-    if (state.cropDraft) {
-      drawBboxOnCanvas(state.cropDraft, {
+    (state.crops || []).forEach((box, i) => {
+      const act = box.activity || $("activitySelect")?.value || "";
+      drawBboxOnCanvas(box, {
         fill: "rgba(14, 118, 110, 0.18)",
         stroke: "#0f766e",
+        label: `Crop ${i + 1}${act ? `: ${act}` : ""}`,
+      });
+    });
+    if (state.cropDraft) {
+      const act = $("activitySelect")?.value || "";
+      drawBboxOnCanvas(state.cropDraft, {
+        fill: "rgba(14, 118, 110, 0.28)",
+        stroke: "#14b8a6",
+        label: act ? `new: ${act}` : "new",
       });
     }
   }
@@ -1231,6 +1255,7 @@
     state.pendingStart = null;
     state.pendingEnd = null;
     state.editingSegIdx = null;
+    state.crops = [];
     state.cropDraft = null;
     state.drawing = false;
     updateCropWarn();
@@ -1307,6 +1332,7 @@
     state.pendingStart = null;
     state.pendingEnd = null;
     state.editingSegIdx = null;
+    state.crops = [];
     state.cropDraft = null;
     updateCropWarn();
     updatePending();
@@ -1584,33 +1610,50 @@
     let start = state.pendingStart;
     let end = state.pendingEnd;
     if (end < start) [start, end] = [end, start];
-    const activity = $("activitySelect").value;
-    if (!activity) {
+    const boxes = currentCrops();
+    const warn = boxes.some((b) => cropWarnMessage(b));
+    const editing = state.editingSegIdx != null;
+    const prev = editing ? state.segments[state.editingSegIdx] : null;
+    const fallbackActivity = $("activitySelect").value;
+    const activityOf = (box) => (box?.activity || fallbackActivity || "").trim();
+    if (!boxes.length && !fallbackActivity) {
       toast("Pick an activity", "error");
       return;
     }
-    const warn = cropWarnMessage(state.cropDraft);
-    const editing = state.editingSegIdx != null;
-    const prev = editing ? state.segments[state.editingSegIdx] : null;
-    const seg = {
-      id: prev?.id || Math.random().toString(36).slice(2, 10),
-      activity,
-      label: activity,
-      start_frame: start,
-      end_frame: end,
-      bbox: state.cropDraft
-        ? [state.cropDraft.x1, state.cropDraft.y1, state.cropDraft.x2, state.cropDraft.y2]
-        : null,
-      note: prev?.note || "",
+    if (boxes.length && boxes.some((b) => !activityOf(b))) {
+      toast("Pick an activity for each crop", "error");
+      return;
+    }
+    const makeSeg = (box, extra = {}) => {
+      const activity = activityOf(box);
+      return {
+        id: extra.id || Math.random().toString(36).slice(2, 10),
+        activity,
+        label: activity,
+        start_frame: start,
+        end_frame: end,
+        bbox: box ? [box.x1, box.y1, box.x2, box.y2] : null,
+        note: extra.note || "",
+      };
     };
     if (editing) {
-      state.segments[state.editingSegIdx] = seg;
+      state.segments[state.editingSegIdx] = makeSeg(boxes[0] || null, {
+        id: prev?.id,
+        note: prev?.note || "",
+      });
       state.editingSegIdx = null;
+    } else if (boxes.length) {
+      boxes.forEach((box) => state.segments.push(makeSeg(box)));
     } else {
-      state.segments.push(seg);
+      state.segments.push(makeSeg(null));
     }
+    const count = editing ? 1 : Math.max(1, boxes.length);
+    const labels = editing
+      ? activityOf(boxes[0] || null)
+      : [...new Set(boxes.map((b) => activityOf(b)).filter(Boolean))].join(", ") || fallbackActivity;
     state.pendingStart = null;
     state.pendingEnd = null;
+    state.crops = [];
     state.cropDraft = null;
     updateCropWarn();
     updatePending();
@@ -1619,8 +1662,10 @@
     const verb = editing ? "Updated" : "Saved";
     toast(
       warn
-        ? `${verb} ${seg.label} ${start}–${end} (crop looks large — prefer one person)`
-        : `${verb} ${seg.label} ${start}–${end}`,
+        ? `${verb} ${count} crop${count === 1 ? "" : "s"} ${start}–${end} (a crop looks large — prefer one person)`
+        : count > 1
+          ? `${verb} ${count} crops (${labels}) ${start}–${end}`
+          : `${verb} ${labels} ${start}–${end}`,
       warn ? "error" : "ok"
     );
   };
@@ -1739,14 +1784,81 @@
     btn.classList.toggle("is-active", state.cropMode);
     btn.setAttribute("aria-pressed", state.cropMode ? "true" : "false");
     overlay.classList.toggle("crop-on", state.cropMode);
-    toast(state.cropMode ? "Drag on video to draw crop box" : "Crop mode off");
+    toast(
+      state.cropMode
+        ? "Drag a box per person — you can draw several, then Save segment"
+        : "Crop mode off"
+    );
   };
 
   $("btnClearCrop").onclick = () => {
+    state.crops = [];
     state.cropDraft = null;
     updateCropWarn();
     drawOverlay();
   };
+
+  function defaultCropActivity() {
+    return ($("activitySelect")?.value || "").trim();
+  }
+
+  function stampCropActivity(box) {
+    if (!box) return box;
+    return { ...box, activity: box.activity || defaultCropActivity() };
+  }
+
+  function renderCropList() {
+    const list = $("cropList");
+    if (!list) return;
+    const boxes = state.crops || [];
+    list.innerHTML = "";
+    if (!boxes.length) {
+      list.hidden = true;
+      return;
+    }
+    list.hidden = false;
+    boxes.forEach((box, i) => {
+      const row = document.createElement("div");
+      row.className = "crop-item";
+      const sel = document.createElement("select");
+      sel.setAttribute("aria-label", `Activity for crop ${i + 1}`);
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "activity…";
+      sel.appendChild(none);
+      (state.activities || []).forEach((name) => {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+      });
+      sel.value = box.activity || defaultCropActivity();
+      if (sel.value && !box.activity) {
+        box.activity = sel.value;
+      }
+      sel.onchange = () => {
+        state.crops[i] = { ...state.crops[i], activity: sel.value };
+        drawOverlay();
+      };
+      const lab = document.createElement("span");
+      lab.className = "crop-item-n";
+      lab.textContent = `Crop ${i + 1}`;
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.className = "btn btn-ghost btn-small";
+      rm.textContent = "×";
+      rm.title = `Remove crop ${i + 1}`;
+      rm.onclick = () => {
+        state.crops.splice(i, 1);
+        updateCropWarn();
+        drawOverlay();
+      };
+      row.appendChild(lab);
+      row.appendChild(sel);
+      row.appendChild(rm);
+      list.appendChild(row);
+    });
+  }
 
   function frameSize() {
     const w = state.meta?.width || videoEl.videoWidth || 0;
@@ -1761,6 +1873,17 @@
     const bw = Math.max(0, draft.x2 - draft.x1);
     const bh = Math.max(0, draft.y2 - draft.y1);
     return (bw * bh) / (w * h);
+  }
+
+  function isUsableCrop(box) {
+    if (!box) return false;
+    return Math.abs(box.x2 - box.x1) >= 8 && Math.abs(box.y2 - box.y1) >= 8;
+  }
+
+  function currentCrops() {
+    const boxes = [...(state.crops || [])];
+    if (isUsableCrop(state.cropDraft)) boxes.push(state.cropDraft);
+    return boxes;
   }
 
   function cropWarnMessage(draft) {
@@ -1778,7 +1901,13 @@
   function updateCropWarn() {
     const el = $("cropWarn");
     if (!el) return;
-    const msg = cropWarnMessage(state.cropDraft);
+    const boxes = currentCrops();
+    const warn = boxes.map(cropWarnMessage).find(Boolean) || "";
+    const count = boxes.length;
+    const countMsg = count
+      ? `${count} person crop${count === 1 ? "" : "s"} — set activity per crop, then Save segment`
+      : "";
+    const msg = [countMsg, warn].filter(Boolean).join(". ");
     if (msg) {
       el.hidden = false;
       el.textContent = msg;
@@ -1786,12 +1915,16 @@
       el.hidden = true;
       el.textContent = "";
     }
+    renderCropList();
   }
 
   overlay.addEventListener("mousedown", (e) => {
     if (!state.cropMode) return;
     const rect = overlay.getBoundingClientRect();
     const pt = clientToVideo(e.clientX - rect.left, e.clientY - rect.top);
+    if (isUsableCrop(state.cropDraft)) {
+      state.crops.push(stampCropActivity(state.cropDraft));
+    }
     state.drawing = true;
     state.drawOrigin = pt;
     state.cropDraft = { x1: pt.x, y1: pt.y, x2: pt.x, y2: pt.y };
@@ -1813,9 +1946,14 @@
   window.addEventListener("mouseup", () => {
     if (state.drawing) {
       state.drawing = false;
+      if (isUsableCrop(state.cropDraft)) {
+        state.crops.push(stampCropActivity(state.cropDraft));
+      }
+      state.cropDraft = null;
       updateCropWarn();
-      const msg = cropWarnMessage(state.cropDraft);
-      if (msg) toast(msg, "error");
+      drawOverlay();
+      const warn = (state.crops || []).map(cropWarnMessage).find(Boolean);
+      if (warn) toast(warn, "error");
     } else {
       state.drawing = false;
     }

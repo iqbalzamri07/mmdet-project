@@ -154,10 +154,10 @@
               <li><strong>Set your name</strong> in the Videos panel (so locks and save history show who labeled).</li>
               <li><strong>Pick a video</strong> from Need (or Done to review).</li>
               <li><strong>Choose activity</strong> (e.g. smoking).</li>
-              <li><strong>Mark start / end</strong> on the timeline, then <strong>Draw crop</strong> tightly around one person.</li>
-              <li><strong>Save segment</strong>, repeat if needed, then <strong>Save all</strong>.</li>
+              <li><strong>Mark start / end</strong> on the timeline, then <strong>Draw crop</strong> tightly around each person (you can draw several boxes).</li>
+              <li><strong>Save segment</strong> stores one clip per crop with that activity, then <strong>Save all</strong>.</li>
             </ol>
-            <p class="empty-tip">Tip: click the same video again to deselect and leave editing. One person per crop — if someone walks into the box, shorten the segment or redraw.</p>
+            <p class="empty-tip">Tip: click the same video again to deselect. Keep each crop on one person — if someone walks into the box, shorten the segment or redraw.</p>
           </div>
         </div>
 
@@ -195,16 +195,6 @@
         <p class="annotate-meta hint" id="annotateMeta">Select a video to annotate.</p>
         <div class="segments-body" id="segmentsBody">
           <section class="annotate-block">
-            <h3 class="block-label">Labels</h3>
-            <div class="field-grid">
-              <label class="field">
-                <span>Activity</span>
-                <select id="activitySelect"></select>
-              </label>
-            </div>
-          </section>
-
-          <section class="annotate-block">
             <h3 class="block-label">Segment range</h3>
             <div class="btn-row">
               <button class="btn btn-ghost" id="btnMarkStart" type="button">Mark start</button>
@@ -217,11 +207,17 @@
 
           <section class="annotate-block">
             <h3 class="block-label">Person crop</h3>
+            <label class="crop-default">
+              <span>Default</span>
+              <select id="activitySelect" title="Used for new crops until you change Crop 1 / Crop 2"></select>
+            </label>
             <div class="btn-row">
               <button class="btn btn-ghost" id="btnToggleCrop" type="button">Draw crop</button>
               <button class="btn btn-ghost" id="btnClearCrop" type="button">Clear</button>
             </div>
+            <p class="hint" style="margin-top:6px">Draw one box per person, then set each crop’s activity below.</p>
             <p class="crop-warn" id="cropWarn" hidden role="status"></p>
+            <div class="crop-list" id="cropList" hidden></div>
           </section>
 
           <section class="annotate-block annotate-block-fill">
