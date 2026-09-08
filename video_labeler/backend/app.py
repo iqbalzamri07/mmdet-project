@@ -16,6 +16,7 @@ import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -52,6 +53,7 @@ from .infer import (
     list_test_jobs,
     list_test_library,
     run_live_clip,
+    run_live_detect,
     start_inference_job,
 )
 from .onnx_export import (
@@ -1103,8 +1105,9 @@ def test_result_delete(job_id: str):
 async def test_live(
     checkpoint: str = Form(...),
     frames: List[UploadFile] = File(...),
+    mode: str = Form("clip"),
 ):
-    """Classify a short webcam clip (JPEG frames) with person boxes + activity."""
+    """Live camera: `detect` = boxes only; `clip` = boxes + SlowFast activity."""
     try:
         ckpt = resolve_work_file(checkpoint)
     except (FileNotFoundError, ValueError) as exc:
@@ -1118,10 +1121,17 @@ async def test_live(
         img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if img is not None:
             decoded.append(img)
-    if len(decoded) < 5:
-        raise HTTPException(400, "Need at least 5 camera frames")
+    kind = (mode or "clip").strip().lower()
     try:
-        return run_live_clip(decoded, ckpt)
+        if kind == "detect":
+            if not decoded:
+                raise HTTPException(400, "Need a camera frame")
+            return await run_in_threadpool(run_live_detect, decoded[-1], ckpt)
+        if len(decoded) < 5:
+            raise HTTPException(400, "Need at least 5 camera frames")
+        return await run_in_threadpool(run_live_clip, decoded, ckpt)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(500, str(exc)) from exc
 

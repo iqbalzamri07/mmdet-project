@@ -33,7 +33,7 @@ CLIP_LEN = 16
 MIN_FRAMES = 5
 DETECT_EVERY = 2  # run detector every N frames (speed)
 WINDOW_STRIDE = 8
-DET_THRESHOLD = 0.7
+DET_THRESHOLD = 0.85
 TARGET_SIZE = (160, 160)
 CONFIDENCE_THRESHOLD = 0.70
 # Below this sigmoid/softmax score → label as "others" (not a trained activity).
@@ -636,37 +636,93 @@ def _classify_crops(
     return _decode_activity(scores, labels, activities, multi_label)
 
 
-_live_lock = threading.Lock()
+_live_load_lock = threading.Lock()
+_live_det_lock = threading.Lock()
+_live_action_lock = threading.Lock()
 _live_bundle: Dict[str, Any] = {}
 
 
-def _get_live_models(checkpoint_path: Path) -> Dict[str, Any]:
-    """Load detector + SlowFast once and reuse for camera clips."""
+def _ensure_live_detector():
+    """Load Faster R-CNN once. Stays on CPU so boxes can run while SlowFast uses the GPU."""
+    global _live_bundle
+    det = _live_bundle.get("det_model")
+    if det is not None:
+        return det
+    with _live_load_lock:
+        det = _live_bundle.get("det_model")
+        if det is not None:
+            return det
+        from mmdet.apis import init_detector
+        from mmengine import init_default_scope
+
+        os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:64,expandable_segments:True")
+        init_default_scope("mmdet")
+        det = init_detector(str(DET_CONFIG), str(DET_CHECKPOINT), device="cpu")
+        _live_bundle["det_model"] = det
+        return det
+
+
+def _ensure_live_action(checkpoint_path: Path) -> Dict[str, Any]:
+    """Load SlowFast once per checkpoint and reuse for camera clips."""
     global _live_bundle
     ckpt = str(checkpoint_path.resolve())
     if _live_bundle.get("checkpoint") == ckpt and _live_bundle.get("action_backend") is not None:
         return _live_bundle
+    with _live_load_lock:
+        if _live_bundle.get("checkpoint") == ckpt and _live_bundle.get("action_backend") is not None:
+            return _live_bundle
+        labels, activities = _load_label_taxonomy()
+        backend, multi_label, labels_used = load_action_backend(checkpoint_path, labels)
+        activities_used = [a for a in activities if a in labels_used] or list(labels_used)
+        _live_bundle.update(
+            {
+                "checkpoint": ckpt,
+                "action_backend": backend,
+                "action_model": backend,
+                "labels": labels_used,
+                "activities": activities_used,
+                "multi_label": multi_label,
+                "device": getattr(backend, "kind", "pth"),
+            }
+        )
+        return _live_bundle
 
-    from mmdet.apis import init_detector
-    from mmengine import init_default_scope
 
-    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:64,expandable_segments:True")
-    labels, activities = _load_label_taxonomy()
-    backend, multi_label, labels_used = load_action_backend(checkpoint_path, labels)
-    activities_used = [a for a in activities if a in labels_used] or list(labels_used)
-    init_default_scope("mmdet")
-    det_model = init_detector(str(DET_CONFIG), str(DET_CHECKPOINT), device="cpu")
-    _live_bundle = {
-        "checkpoint": ckpt,
-        "action_backend": backend,
-        "action_model": backend,
-        "det_model": det_model,
-        "labels": labels_used,
-        "activities": activities_used,
-        "multi_label": multi_label,
-        "device": getattr(backend, "kind", "pth"),
+def _boxes_to_persons(boxes: List[Tuple[int, int, int, int]]) -> List[Dict[str, Any]]:
+    persons = []
+    for i, (x1, y1, x2, y2) in enumerate(boxes):
+        persons.append(
+            {
+                "id": i,
+                "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                "label": "",
+                "activity": "",
+                "score": 0,
+                "activity_score": 0,
+                "frames": 0,
+            }
+        )
+    return persons
+
+
+def run_live_detect(frame: np.ndarray, checkpoint_path: Path) -> Dict[str, Any]:
+    """Fast path: person boxes on one frame, no SlowFast."""
+    if frame is None or getattr(frame, "size", 0) == 0:
+        return {"ok": False, "error": "No frame", "persons": []}
+    if not DET_CHECKPOINT.exists():
+        return {"ok": False, "error": f"Detector missing: {DET_CHECKPOINT}", "persons": []}
+    with _live_det_lock:
+        det = _ensure_live_detector()
+        boxes = _detect_persons(det, frame)
+    h, w = frame.shape[:2]
+    return {
+        "ok": True,
+        "mode": "detect",
+        "width": int(w),
+        "height": int(h),
+        "persons": _boxes_to_persons(boxes),
+        "checkpoint": checkpoint_path.name,
     }
-    return _live_bundle
 
 
 def run_live_clip(frames: List[np.ndarray], checkpoint_path: Path) -> Dict[str, Any]:
@@ -678,11 +734,13 @@ def run_live_clip(frames: List[np.ndarray], checkpoint_path: Path) -> Dict[str, 
     if not DET_CHECKPOINT.exists():
         return {"ok": False, "error": f"Detector missing: {DET_CHECKPOINT}", "persons": []}
 
-    with _live_lock:
-        bundle = _get_live_models(checkpoint_path)
-        last = frames[-1]
-        boxes = _detect_persons(bundle["det_model"], last)
-        persons = []
+    last = frames[-1]
+    with _live_det_lock:
+        det = _ensure_live_detector()
+        boxes = _detect_persons(det, last)
+    bundle = _ensure_live_action(checkpoint_path)
+    persons = []
+    with _live_action_lock:
         for i, (x1, y1, x2, y2) in enumerate(boxes):
             crops = []
             for frame in frames:
@@ -710,9 +768,10 @@ def run_live_clip(frames: List[np.ndarray], checkpoint_path: Path) -> Dict[str, 
                     "frames": len(crops),
                 }
             )
-    h, w = frames[-1].shape[:2]
+    h, w = last.shape[:2]
     return {
         "ok": True,
+        "mode": "clip",
         "width": int(w),
         "height": int(h),
         "persons": persons,

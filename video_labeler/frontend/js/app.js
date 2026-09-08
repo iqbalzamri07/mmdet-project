@@ -2106,6 +2106,12 @@
     cameraOn: false,
     stream: null,
     liveBusy: false,
+    liveDetectBusy: false,
+    liveClipBusy: false,
+    liveBuffer: [],
+    liveNextId: 0,
+    liveCaptureTimer: null,
+    liveOverlayRaf: 0,
     lastPersons: [],
     libraryQuery: "",
     libraryPage: 1,
@@ -2933,6 +2939,7 @@
   function drawLiveOverlay() {
     const video = $("liveVideo");
     const canvas = $("liveOverlay");
+    if (!video || !canvas || !canvas.parentElement) return;
     const wrap = canvas.parentElement.getBoundingClientRect();
     const ctxLive = canvas.getContext("2d");
     canvas.width = wrap.width * devicePixelRatio;
@@ -2957,13 +2964,107 @@
       ctxLive.strokeStyle = "#0f766e";
       ctxLive.lineWidth = 2;
       ctxLive.strokeRect(x, y, w, h);
-      const text = `P${p.id ?? i}: ${p.label || "unknown"} ${((p.score || 0) * 100).toFixed(0)}%`;
+      const act = p.activity || p.label || "…";
+      const pct = p.score ? ` ${((p.score || 0) * 100).toFixed(0)}%` : "";
+      const text = `P${p.id ?? i}: ${act}${pct}`;
       ctxLive.font = "600 13px IBM Plex Sans, sans-serif";
       const tw = ctxLive.measureText(text).width;
       ctxLive.fillStyle = "#0f766e";
       ctxLive.fillRect(x, Math.max(0, y - 20), tw + 10, 20);
       ctxLive.fillStyle = "#fff";
       ctxLive.fillText(text, x + 5, Math.max(14, y - 5));
+    });
+  }
+
+  function bboxIou(a, b) {
+    if (!a || !b || a.length < 4 || b.length < 4) return 0;
+    const ix1 = Math.max(a[0], b[0]);
+    const iy1 = Math.max(a[1], b[1]);
+    const ix2 = Math.min(a[2], b[2]);
+    const iy2 = Math.min(a[3], b[3]);
+    const inter = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1);
+    const areaA = Math.max(0, a[2] - a[0]) * Math.max(0, a[3] - a[1]);
+    const areaB = Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]);
+    return inter / (areaA + areaB - inter + 1e-6);
+  }
+
+  function matchLiveTracks(incoming, { updateLabels }) {
+    if (updateLabels) {
+      const tracks = testState.lastPersons || [];
+      const used = new Set();
+      (incoming || []).forEach((p) => {
+        let best = -1;
+        let bestIou = 0.3;
+        tracks.forEach((old, j) => {
+          if (used.has(j)) return;
+          const iou = bboxIou(p.bbox, old.bbox);
+          if (iou > bestIou) {
+            bestIou = iou;
+            best = j;
+          }
+        });
+        if (best < 0) return;
+        used.add(best);
+        tracks[best].label = p.activity || p.label || tracks[best].label;
+        tracks[best].activity = p.activity || p.label || tracks[best].activity;
+        tracks[best].score = p.score || 0;
+        tracks[best].activity_score = p.activity_score || p.score || tracks[best].activity_score || 0;
+        tracks[best].frames = p.frames || tracks[best].frames || 0;
+      });
+      return;
+    }
+    const prev = testState.lastPersons || [];
+    const used = new Set();
+    testState.lastPersons = (incoming || []).map((p) => {
+      let best = -1;
+      let bestIou = 0.3;
+      prev.forEach((old, j) => {
+        if (used.has(j)) return;
+        const iou = bboxIou(p.bbox, old.bbox);
+        if (iou > bestIou) {
+          bestIou = iou;
+          best = j;
+        }
+      });
+      if (best >= 0) {
+        used.add(best);
+        const old = prev[best];
+        return {
+          ...old,
+          bbox: p.bbox || old.bbox,
+        };
+      }
+      return {
+        id: testState.liveNextId++,
+        bbox: p.bbox || [0, 0, 0, 0],
+        label: "",
+        activity: "",
+        score: 0,
+        activity_score: 0,
+        frames: 0,
+      };
+    });
+  }
+
+  function renderLivePredictions() {
+    const body = $("predBody");
+    if (!body) return;
+    body.innerHTML = "";
+    const persons = testState.lastPersons || [];
+    if (!persons.length) {
+      body.innerHTML = '<tr><td colspan="4">No persons detected</td></tr>';
+      return;
+    }
+    persons.forEach((p) => {
+      const tr = document.createElement("tr");
+      const act = p.activity || p.label || "…";
+      const score = p.score ? `${((p.score || 0) * 100).toFixed(1)}%` : "—";
+      tr.innerHTML = `
+        <td>P${p.id}</td>
+        <td>${act}</td>
+        <td>${score}</td>
+        <td>${p.frames || "—"}</td>`;
+      body.appendChild(tr);
     });
   }
 
@@ -2981,54 +3082,95 @@
     return new Promise((resolve) => c.toBlob((b) => resolve(b), "image/jpeg", 0.7));
   }
 
-  async function liveLoop() {
-    const CLIP = 16;
-    while (testState.cameraOn) {
-      const checkpoint = $("modelSelect").value;
-      if (!checkpoint) {
-        toast("Select a model checkpoint", "error");
-        stopCamera();
-        break;
-      }
-      const blobs = [];
-      for (let i = 0; i < CLIP && testState.cameraOn; i++) {
-        const blob = await captureLiveJpeg();
-        if (blob) blobs.push(blob);
-        await new Promise((r) => setTimeout(r, 80));
-      }
-      if (!testState.cameraOn || blobs.length < 5) continue;
+  const LIVE_CLIP = 16;
+  const LIVE_MIN_CLIP = 8;
+  const LIVE_CAPTURE_MS = 80;
+
+  function liveCheckpoint() {
+    return $("modelSelect")?.value || "";
+  }
+
+  async function pumpLiveDetect() {
+    if (testState.liveDetectBusy || !testState.cameraOn) return;
+    const blob = testState.liveBuffer[testState.liveBuffer.length - 1];
+    const checkpoint = liveCheckpoint();
+    if (!blob || !checkpoint) return;
+    testState.liveDetectBusy = true;
+    try {
       const fd = new FormData();
       fd.append("checkpoint", checkpoint);
-      blobs.forEach((b, i) => fd.append("frames", b, `f${i}.jpg`));
-      $("testPill").textContent = "live";
-      $("testPill").className = "status-pill running";
-      $("testLog").textContent = `Sending ${blobs.length} frames…`;
-      try {
-        const data = await api("/api/test/live", { method: "POST", body: fd });
-        testState.lastPersons = data.persons || [];
-        drawLiveOverlay();
-        const body = $("predBody");
-        body.innerHTML = "";
-        if (!testState.lastPersons.length) {
-          body.innerHTML = '<tr><td colspan="4">No persons detected</td></tr>';
-        } else {
-          testState.lastPersons.forEach((p) => {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `
-              <td>P${p.id}</td>
-              <td>${p.activity || p.label || "—"}</td>
-              <td>${((p.score || 0) * 100).toFixed(1)}%</td>
-              <td>${p.frames}</td>`;
-            body.appendChild(tr);
-          });
-        }
-        $("testLog").textContent = `${testState.lastPersons.length} person(s) · last clip ${blobs.length} frames`;
-      } catch (err) {
-        $("testLog").textContent = err.message || "Live inference failed";
-        $("testPill").textContent = "failed";
-        $("testPill").className = "status-pill failed";
+      fd.append("mode", "detect");
+      fd.append("frames", blob, "frame.jpg");
+      const data = await api("/api/test/live", { method: "POST", body: fd });
+      if (!testState.cameraOn) return;
+      matchLiveTracks(data.persons || [], { updateLabels: false });
+      renderLivePredictions();
+      const n = (testState.lastPersons || []).length;
+      $("testLog").textContent = n
+        ? `${n} person(s) · boxes live · activity ${testState.liveClipBusy ? "running…" : "ready"}`
+        : "No persons detected — boxes live";
+    } catch (err) {
+      if (testState.cameraOn) {
+        $("testLog").textContent = err.message || "Live detect failed";
       }
+    } finally {
+      testState.liveDetectBusy = false;
     }
+  }
+
+  async function pumpLiveClip() {
+    if (testState.liveClipBusy || !testState.cameraOn) return;
+    if (testState.liveBuffer.length < LIVE_MIN_CLIP) return;
+    const checkpoint = liveCheckpoint();
+    if (!checkpoint) return;
+    const blobs = testState.liveBuffer.slice(-LIVE_CLIP);
+    testState.liveClipBusy = true;
+    try {
+      const fd = new FormData();
+      fd.append("checkpoint", checkpoint);
+      fd.append("mode", "clip");
+      blobs.forEach((b, i) => fd.append("frames", b, `f${i}.jpg`));
+      const data = await api("/api/test/live", { method: "POST", body: fd });
+      if (!testState.cameraOn) return;
+      matchLiveTracks(data.persons || [], { updateLabels: true });
+      renderLivePredictions();
+      const n = (testState.lastPersons || []).length;
+      $("testLog").textContent = n
+        ? `${n} person(s) · boxes live · activity updated (${blobs.length} frames)`
+        : "No persons detected — boxes live";
+    } catch (err) {
+      if (testState.cameraOn) {
+        $("testLog").textContent = err.message || "Live activity failed";
+      }
+    } finally {
+      testState.liveClipBusy = false;
+    }
+  }
+
+  function startLiveCaptureLoop() {
+    const tick = async () => {
+      if (!testState.cameraOn) return;
+      const blob = await captureLiveJpeg();
+      if (blob && testState.cameraOn) {
+        testState.liveBuffer.push(blob);
+        while (testState.liveBuffer.length > LIVE_CLIP) testState.liveBuffer.shift();
+      }
+      pumpLiveDetect();
+      pumpLiveClip();
+      if (testState.cameraOn) {
+        testState.liveCaptureTimer = setTimeout(tick, LIVE_CAPTURE_MS);
+      }
+    };
+    tick();
+  }
+
+  function startLiveOverlayLoop() {
+    const paint = () => {
+      if (!testState.cameraOn) return;
+      drawLiveOverlay();
+      testState.liveOverlayRaf = requestAnimationFrame(paint);
+    };
+    testState.liveOverlayRaf = requestAnimationFrame(paint);
   }
 
   async function startCamera() {
@@ -3045,6 +3187,10 @@
       testState.stream = stream;
       testState.cameraOn = true;
       testState.lastPersons = [];
+      testState.liveBuffer = [];
+      testState.liveNextId = 0;
+      testState.liveDetectBusy = false;
+      testState.liveClipBusy = false;
       showLiveStage();
       const live = $("liveVideo");
       live.srcObject = stream;
@@ -3053,9 +3199,10 @@
       $("btnStopCam").classList.remove("hidden");
       $("testPill").textContent = "live";
       $("testPill").className = "status-pill running";
-      $("testLog").textContent = "Camera on — loading models on first clip…";
+      $("testLog").textContent = "Camera on — boxes first, then activity. First start loads models…";
       toast("Camera started", "ok");
-      liveLoop();
+      startLiveOverlayLoop();
+      startLiveCaptureLoop();
     } catch (err) {
       toast(err.message || "Could not open camera", "error");
     }
@@ -3063,6 +3210,17 @@
 
   function stopCamera() {
     testState.cameraOn = false;
+    if (testState.liveCaptureTimer) {
+      clearTimeout(testState.liveCaptureTimer);
+      testState.liveCaptureTimer = null;
+    }
+    if (testState.liveOverlayRaf) {
+      cancelAnimationFrame(testState.liveOverlayRaf);
+      testState.liveOverlayRaf = 0;
+    }
+    testState.liveBuffer = [];
+    testState.liveDetectBusy = false;
+    testState.liveClipBusy = false;
     if (testState.stream) {
       testState.stream.getTracks().forEach((t) => t.stop());
       testState.stream = null;
